@@ -15,3 +15,4 @@ spec:
     - name: namespaces
     - name: cert-manager
     - name: external-secrets
+    - name: base
