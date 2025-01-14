@@ -12,3 +12,4 @@ spec:
     name: flux-system
   dependsOn:
     - name: cert-manager  # Ensure Cert-Manager is installed first
+    - name: base

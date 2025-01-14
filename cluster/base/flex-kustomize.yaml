@@ -4,7 +4,7 @@ metadata:
   name: base
   namespace: flux-system
 spec:
-  path: ./base
+  path: ./cluster/base
   prune: true
   sourceRef:
     kind: GitRepository
