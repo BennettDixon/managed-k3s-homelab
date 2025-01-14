@@ -30,4 +30,4 @@ pnpm-debug.log*
 terraform.tfstate
 .tfstate.backup
 terraform/state.config
-terraform/*.tfvars
+terraform/terraform.tfvars
