@@ -22,4 +22,4 @@ Finally run `make terraform-init` to initialize terraform with the proper AWS mo
 ## Setup flux on k3s cluster
 https://fluxcd.io/flux/installation/
 `curl -s https://fluxcd.io/install.sh | sudo bash`
-`sudo helm install -n flux-system --create-namespace flux oci://ghcr.io/fluxcd-community/charts/flux2 --kubeconfig /etc/rancher/k3s/k3s.yaml`
+`sudo flux bootstrap github  --owner=bennettdixon  --repository=k3s-homelab  --branch=main  --path=cluster --personal --kubeconfig /etc/rancher/k3s/k3s.yaml`
