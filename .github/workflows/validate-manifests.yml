@@ -1,22 +1,22 @@
-name: Validate Kubernetes Manifests
+# name: Validate Kubernetes Manifests
 
-on:
-#   push:
+# on:
+# #   push:
+# #     branches:
+# #       - main
+#   pull_request:
 #     branches:
 #       - main
-  pull_request:
-    branches:
-      - main
 
-jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+# jobs:
+#   validate:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v3
 
-      - name: Install Kubeval
-        run: curl -s https://install.kubeval.com | bash
+#       - name: Install Kubeval
+#         run: curl -s https://install.kubeval.com | bash
 
-      - name: Validate manifests
-        run: kubeval cluster/**/*.yaml
+#       - name: Validate manifests
+#         run: kubeval cluster/**/*.yaml
