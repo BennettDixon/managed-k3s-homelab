@@ -1,11 +1,11 @@
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: external-secrets
+  name: harbor
   namespace: flux-system
 spec:
   interval: 10m
-  path: ./cluster/apps/external-secrets
+  path: ./cluster/apps/harbor
   prune: true
   sourceRef:
     kind: GitRepository
@@ -13,3 +13,4 @@ spec:
   dependsOn:
     # Make sure to wait for the namespace to be created before deploying anything
     - name: namespaces
+    - name: external-secrets
