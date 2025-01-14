@@ -13,17 +13,3 @@ spec:
   dependsOn:
     # Make sure to wait for the namespace to be created before deploying anything
     - name: namespaces
-
-configMapGenerator:
-  - name: aws-region-config
-    literals:
-      - AWS_REGION=us-east-1
-
-vars:
-  - name: AWS_REGION
-    objref:
-      kind: ConfigMap
-      name: aws-region-config
-      apiVersion: v1
-    fieldref:
-      fieldPath: data.AWS_REGION
