@@ -5,4 +5,4 @@ metadata:
   namespace: podinfo
 spec:
   interval: 5m
-  url: https://github.com/bennettdixon/k3s-homelab.git
+  url: https://stefanprodan.github.io/podinfo
