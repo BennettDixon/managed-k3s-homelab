@@ -1,14 +1,12 @@
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: clusterissuers
+  name: flux-system
   namespace: flux-system
 spec:
   interval: 1m
-  path: ./cluster/resources/clusterissuers
+  path: ./cluster/flux-system
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
-  dependsOn:
-    - name: cert-manager  # Ensure Cert-Manager is installed first

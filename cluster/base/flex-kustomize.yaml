@@ -4,6 +4,7 @@ metadata:
   name: base
   namespace: flux-system
 spec:
+  interval: 1m
   path: ./cluster/base
   prune: true
   sourceRef:
