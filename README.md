@@ -9,6 +9,7 @@ Hi, I'm building something! Check back soon :)
 - AWS Secrets Manager (external secrets store for k8s)
 - AWS S3 (Terraform State Store)
 - Harbor (Artifact Registry)
+- CertManager (TLS)
 
 
 ### Setup
