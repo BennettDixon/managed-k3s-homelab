@@ -4,7 +4,7 @@ Hi, I'm building something! Check back soon :)
 - Terraform
 - K3s by Rancher (lightweight Kubernetes)
 - Flux (GitOps)
-- Kustomize (k8s manifest generator)
+- Kustomize & Flux Kustomize Controller
 - external-secrets.io (external secrets for k8s)
 - AWS Secrets Manager (external secrets store for k8s)
 - AWS S3 (Terraform State Store)
