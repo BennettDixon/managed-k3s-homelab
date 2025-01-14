@@ -19,8 +19,7 @@ metadata:
   name: flux-system
   namespace: flux-system
 spec:
-  # TODO decrease interval; short for testing
-  interval: 1m0s
+  interval: 10m
   path: ./cluster
   prune: true
   sourceRef:
