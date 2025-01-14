@@ -4,7 +4,7 @@ metadata:
   name: namespaces
   namespace: flux-system
 spec:
-  interval: 5m
+  interval: 1m
   path: ./cluster/namespaces
   prune: true
   sourceRef:
