@@ -1,3 +1,33 @@
+---
+# Helm repos loading
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: helm-repos
+  namespace: flux-system
+spec:
+  interval: 1m
+  path: ./cluster/helm-repos
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+# Namespaces
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: namespaces
+  namespace: flux-system
+spec:
+  interval: 1m
+  path: ./cluster/namespaces
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+# Flux system
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -17,3 +47,4 @@ spec:
     - name: base
     # Wait for helm repos (part of base)
     - name: helm-repos
+---

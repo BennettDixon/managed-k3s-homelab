@@ -1,1 +1,0 @@
-Base contains dependencies that are required for the cluster to be provisioned, e.g helm repos, CRDs, etc.
