@@ -13,5 +13,5 @@ spec:
   dependsOn:
     # Make sure to wait for the namespace to be created before deploying anything
     - name: namespaces
-    - name: external-secrets
+    - name: external-secrets-kustomization
     - name: cert-manager
