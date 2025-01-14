@@ -10,3 +10,10 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
+  dependsOn:
+    # Make sure to wait for the namespace to be created before deploying anything
+    - name: namespaces
+    # Wait for base dependencies
+    - name: base
+    # Wait for helm repos (part of base)
+    - name: helm-repos
