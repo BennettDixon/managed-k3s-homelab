@@ -9,6 +9,10 @@ spec:
       # Pinned => update manually
       version: 1.16.1
   values:
+    # The name of the secret where to find harbor admin password
+    existingSecretAdminPassword: harbor-admin-password
+    # The name of the key in the secret where to find harbor admin password Harbor
+    existingSecretAdminPasswordKey: harborAdminPassword
     expose:
       ingress:
         controller: default
@@ -31,8 +35,4 @@ spec:
         resources:
           memory: 512Mi
           cpu: 200m
-  valuesFrom:
-    - kind: Secret
-      name: harbor-admin-password
-      valuesKey: harborAdminPassword
 
