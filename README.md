@@ -1,15 +1,15 @@
 Hi, I'm building something! Check back soon :)
 
 ## Uses
-- Terraform
-- K3s by Rancher (lightweight Kubernetes)
-- Flux (GitOps)
-- Kustomize & Flux Kustomize Controller
-- external-secrets.io (external secrets for k8s)
+- [terraform](https://www.terraform.io) for cloud infrastructure
+- [K3s](https://k3s.io) by Rancher (lightweight Kubernetes)
+- [fluxcd](https://fluxcd.io) (GitOps for Kubernetes)
+- [Kustomize](https://kustomize.io/) & [Flux Kustomize Controller](https://github.com/fluxcd/kustomize-controller)
+- [Harbor](https://goharbor.io) (Artifact Registry with features like Vulnerability Scanning with Trivy, RBAC, and SSO)
+- [external-secrets.io](https://external-secrets.io) (external secrets for k8s)
 - AWS Secrets Manager (external secrets store for k8s)
 - AWS S3 (Terraform State Store)
-- Harbor (Artifact Registry)
-- CertManager (TLS)
+- [cert-manager](https://cert-manager.io) (TLS)
 
 
 ### Setup
