@@ -7,6 +7,8 @@ patches:
   - path: podinfo-values.yaml
     target:
       kind: HelmRelease
+      name: podinfo
   - path: harbor-values.yaml
     target:
       kind: HelmRelease
+      name: harbor

@@ -20,8 +20,8 @@ spec:
           cert-manager.io/cluster-issuer: "letsencrypt"
     persistence:
       persistentVolumeClaim:
+        # Adjust based on your storage options
         registry:
-          # Adjust based on your storage options
           size: 100Gi
         redis:
           size: 2Gi
