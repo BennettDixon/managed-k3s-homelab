@@ -1,0 +1,38 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: harbor
+  namespace: harbor
+spec:
+  chart:
+    spec:
+      # Pinned => update manually
+      version: 1.16.1
+  values:
+    expose:
+      ingress:
+        controller: default
+        enabled: true
+        hosts:
+          core: harbor.internal
+          notary: notary.harbor.internal
+        annotations:
+          cert-manager.io/cluster-issuer: "letsencrypt"
+    persistence:
+      persistentVolumeClaim:
+        registry:
+          # Adjust based on your storage options
+          size: 100Gi
+        redis:
+          size: 2Gi
+    redis:
+      internal:
+        # Adjust based on your resource options
+        resources:
+          memory: 512Mi
+          cpu: 200m
+  valuesFrom:
+    - kind: Secret
+      name: harbor-admin-secret
+      valuesKey: harborAdminPassword
+

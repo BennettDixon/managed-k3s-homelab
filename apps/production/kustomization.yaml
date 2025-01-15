@@ -3,8 +3,10 @@ kind: Kustomization
 resources:
   - ../base/podinfo
   - ../base/harbor
-  - secrets.yaml
 patches:
   - path: podinfo-values.yaml
+    target:
+      kind: HelmRelease
+  - path: harbor-values.yaml
     target:
       kind: HelmRelease
