@@ -33,6 +33,6 @@ spec:
           cpu: 200m
   valuesFrom:
     - kind: Secret
-      name: harbor-admin-secret
+      name: harbor-admin-password
       valuesKey: harborAdminPassword
 
