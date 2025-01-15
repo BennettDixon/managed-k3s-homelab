@@ -7,9 +7,9 @@ module "harbor_admin_password_secret" {
 
 module "cluster_secret_reader" {
   source       = "./modules/iam"
-  role_name    = "k3s-secrets-access-role"
+  role_name    = "k3s-cluster-secrets-access-role"
   service_name = "ecs-tasks.amazonaws.com"
-  policy_name  = "k3s-secrets-access-policy"
+  policy_name  = "k3s-cluster-secrets-access-policy"
   policy_json  = jsonencode({
     Version = "2012-10-17",
     Statement = [
