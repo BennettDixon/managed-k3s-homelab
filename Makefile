@@ -2,11 +2,11 @@
 
 .PHONY: terraform-init
 terraform-init:
-	@cd terraform && terraform init --backend-config ./state.config -lock=false
+	@cd terraform && terraform init --backend-config ./state.config
 
 .PHONY: terraform-apply
 terraform-apply:
-	@cd terraform && terraform apply -lock=false
+	@cd terraform && terraform apply
 
 .PHONY: terraform-destroy
 terraform-destroy:
@@ -14,7 +14,7 @@ terraform-destroy:
 
 .PHONY: terraform-plan
 terraform-plan:
-	@cd terraform && terraform plan -lock=false
+	@cd terraform && terraform plan
 
 
 .PHONY: flux-logs
