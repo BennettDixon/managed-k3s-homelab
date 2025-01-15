@@ -56,3 +56,12 @@ Type: A
 Value: <your-local-ip>
 Description: Harbor Server
 ```
+Create a non root user for harbor as the main admin. Create other users as needed. Create a user for docker access that is a maintainer.
+
+Create a project in harbor, and download the certificate.
+
+Add the registry certificates to your local docker daemon
+
+https://docs.docker.com/desktop/troubleshoot-and-support/faqs/macfaqs/
+
+Login to docker with your local registry: `docker login harbor.internal`
