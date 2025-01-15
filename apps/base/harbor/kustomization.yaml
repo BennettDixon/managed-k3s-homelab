@@ -3,4 +3,3 @@ kind: Kustomization
 namespace: harbor
 resources:
   - namespace.yaml
-  - secrets.yaml
