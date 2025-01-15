@@ -39,3 +39,20 @@ Manually create AWS IAM user with access permissions for reading secrets and add
 ```bash
 sudo kubectl create secret generic aws-creds -n external-secrets   --from-literal=aws_access_key_id=YOUR_AWS_ACCESS_KEY_ID  --from-literal=aws_secret_access_key=YOUR_AWS_SECRET_ACCESS_KEY --kubeconfig=/etc/rancher/k3s/k3s.yaml
 ```
+
+
+Add an entry to your DNS server to allow access to your harbor ingress controller
+```
+$ sudo kubectl get ingress -n harbor
+NAME             CLASS     HOSTS             ADDRESS        PORTS     AGE
+harbor-ingress   traefik   harbor.internal   <your-local-ip>   80, 443   17m
+```
+
+Then add an entry to your DNS server:
+```yaml
+Host: harbor
+Domain: internal
+Type: A
+Value: <your-local-ip>
+Description: Harbor Server
+```
