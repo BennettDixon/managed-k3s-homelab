@@ -5,7 +5,7 @@ module "harbor_admin_password_secret" {
   secret_value = var.harbor_admin_password
 }
 
-module "harbor_admin_iam" {
+module "cluster_secret_reader" {
   source       = "./modules/iam"
   role_name    = "k3s-secrets-access-role"
   service_name = "ecs-tasks.amazonaws.com"
@@ -16,7 +16,9 @@ module "harbor_admin_iam" {
       {
         Effect   = "Allow",
         Action   = ["secretsmanager:GetSecretValue"],
-        Resource = module.harbor_admin_password_secret.secret_arn
+        Resource = [
+          module.harbor_admin_password_secret.secret_arn,
+        ]
       }
     ]
   })
