@@ -1,5 +1,5 @@
 ## K8s Flux Stack
-An opinionated starting point for a cloud-native based K8s cluster with [fluxcd](https://fluxcd.io) for automated cluster management.
+An opinionated starting point for a cloud-native based K8s cluster with [fluxcd](https://fluxcd.io) for automated cluster management. It includes Harbor for an artifact registry, cert-manager for TLS certificates, and external-secrets for secrets management out-of-the-box. It also utilizes terraform to setup the secret manager & admin password for Harbor. This project can be extended to include more features, clusters, and providers.
 
 I run this on my homelab on [K3s](https://k3s.io), but it could be used on any k8s cluster. I also utilize AWS for my terraform state storage & secret manager, but you can use whatever you like. You will just need to update terraform for your new provider, and update the external secrets operator (ESO) in your cluster to use your own secret manager.
 
