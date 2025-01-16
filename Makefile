@@ -12,4 +12,4 @@ show-grafana-login:
 
 .PHONY: setup-terraform-templates
 setup-terraform-templates:
-	@./scripts/setup-terraform-templates.sh
+	@./scripts/setup-terraform-sensitive-files.sh
