@@ -40,21 +40,21 @@ k8s-flux-starter/
 
 ### Prerequisites
 1. **Kubernetes Cluster >= 1.29:**  if not using K3s you will need to customize the ingress controller.
-  - **Local Cluster:** K3s, Kind, Minikube, etc.
-  - **Managed Cluster:** AWS EKS, GKE, AKS, etc.
+    - **Local Cluster:** K3s, Kind, Minikube, etc.
+    - **Managed Cluster:** AWS EKS, GKE, AKS, etc.
 2. **Flux CLI:**
-Flux CLI will be used to bootstrap flux on the cluster. Ensure FluxCLI is installed on your cluster machine or wherever you apply kubectl commands. Refer to the Flux [CLI Installation Guide](https://fluxcd.io/flux/installation/#install-the-flux-cli).
+    Flux CLI will be used to bootstrap flux on the cluster. Ensure FluxCLI is installed on your cluster machine or wherever you apply kubectl commands. Refer to the Flux [CLI Installation Guide](https://fluxcd.io/flux/installation/#install-the-flux-cli).
 3. **Terraform:**
-Ensure Terraform is installed on your development machine. Follow the [Terraform Installation Guide](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli) for your preferred installation method.
+    Ensure Terraform is installed on your development machine. Follow the [Terraform Installation Guide](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli) for your preferred installation method.
 4. **AWS CLI:**
-We will be utilize AWS as our state backend for Terraform, as well as our secrets manager. Ensure AWS CLI is installed on your development machine for use with Terraform. If you would like to use a different cloud provider you can customize the Terraform configuration. Refer to the [AWS CLI Installation Guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) for your preferred installation method.
+    We will be utilize AWS as our state backend for Terraform, as well as our secrets manager. Ensure AWS CLI is installed on your development machine for use with Terraform. If you would like to use a different cloud provider you can customize the Terraform configuration. Refer to the [AWS CLI Installation Guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) for your preferred installation method.
 
-Ensure AWS CLI is configured with your access tokens; I recommend creating a dedicated IAM user for Terraform.
-```bash
-aws configure
-```
+    Ensure AWS CLI is configured with your access tokens; I recommend creating a dedicated IAM user for Terraform.
+    ```bash
+    aws configure
+    ```
 5. **Make (optional):**
-This repository uses Make to manage the terraform and flux setup. Technically it is not required, but it will make setup a bit easier. Refer to the [CMake Installation Guide](https://cmake.org/download/) for your preferred installation method.
+    This repository uses Make to manage the terraform and flux setup. Technically it is not required, but it will make setup a bit easier. Refer to the [CMake Installation Guide](https://cmake.org/download/) for your preferred installation method.
 
 ### Setup Guide
 Follow these steps to set up your Kubernetes cluster using the **k8s-flux-starter** repository.
@@ -129,22 +129,22 @@ flux bootstrap github \
   - `--personal`: Use this flag if it's a personal repository.
 This command sets up Flux controllers in your cluster and configures them to sync with the specified GitHub repository path.
 
-#### 8. Deploy Infrastructure Components
-Deploy foundational infrastructure components such as controllers and configurations.
+#### 8. Cluster Deployments
+The `clusters` folder contains the main configuration for each cluster managed by flux in the repository. Each cluster is managed separately through the use of Kustomizations.
 
 1. **Navigate to the Cluster Configuration Directory:**
 
 ```bash
 cd ../clusters/development
 ```
-2. **Ensure Infrastructure Kustomizations Are Defined:**
+2. **Ensure Infrastructure & Apps Kustomizations Are Defined:**
 
-The `/clusters/development` & `/clusters/production` directory contains Kustomization manifests that define the order of deployment using dependencies.
+The `/clusters/development` & `/clusters/production` directory contains Kustomization manifests that define the order of deployment using dependencies. There are currently two files: `apps.yaml` and `infrastructure.yaml`. These define the dependency resolution order of the Kustomize overlays.
 
 Flux will automatically detect and apply these Kustomizations in the correct order.
 
 3. Apply changes
-Make any changes that you desire, and push the new changes to GitHub.
+Make any changes that you desire, such as interval timings for Kustomizations and push the new changes to GitHub.
 ```bash
 git add .
 git commit -m "Update infrastructure"
@@ -178,6 +178,131 @@ Should display that all kustomizations are up to date and ready.
 kubectl get all -n flux-system
 ```
 Should display all the resources that Flux has deployed in a consistent state.
+
+#### 9. Deploy your own apps
+Deploy your applications using Flux.
+
+1. **Navigate to the base applications Directory:**
+    ```bash
+    cd ../apps/base
+    mkdir my-app && cd my-app
+    ```
+2. **Add a new namespace for the app:**
+    ```yaml
+    # /apps/base/my-app/namespace.yaml
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+        name: my-app
+    labels:
+        toolkit.fluxcd.io/tenant: sre-team
+
+3. **Define Your Application Manifests:**
+    ```yaml
+    # /apps/base/my-app/my-app.yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+        name: my-app
+        namespace: default
+    spec:
+    replicas: 3
+    selector:
+        matchLabels:
+            app: my-app
+    template:
+        metadata:
+            labels:
+                app: my-app
+        spec:
+            containers:
+                - name: my-app
+                image: your-harbor-repo/my-app:latest
+                ports:
+                    - containerPort: 80
+    ```
+4. **Define your Kustomization:**
+
+    ```yaml
+    # /apps/base/my-app/kustomization.yaml
+    apiVersion: kustomize.config.k8s.io/v1beta1
+    kind: Kustomization
+    resources:
+        - namespace.yaml
+        - my-app.yaml
+    ```
+
+5. **Include your app in your cluster's apps' kustomization:**
+
+    ```yaml
+    # Update /apps/production/kustomization.yaml:
+    apiVersion: kustomize.config.k8s.io/v1beta1
+    kind: Kustomization
+    resources:
+        - ../base/harbor
+        - ../base/kube-prometheus-stack
+        - ../base/my-app # <-- Add your app as a resource
+    patches:
+        - path: harbor-values.yaml
+            target:
+            kind: HelmRelease
+            name: harbor
+    # Optionally define more patches as necessary
+    ```
+
+5. **(optional) define an ingress for your app:**
+
+    ```yaml
+    # /infrastructure/network/my-app-ingress.yaml
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+        name: my-app-ingress
+        namespace: my-app
+    annotations:
+        # If not running on k3s, replace with your ingress controller
+        kubernetes.io/ingress.class: "traefik"
+        cert-manager.io/cluster-issuer: "letsencrypt"
+    labels:
+        app: my-app
+    spec:
+        tls:
+        - hosts:
+            - my-app.internal  # Replace with your domain
+            secretName: my-app-tls-secret  # Cert-Manager will manage this secret
+        rules:
+            # Replace with your domain or subdomain
+            - host: my-app.internal
+                http:
+                paths:
+                - path: /
+                    pathType: Prefix
+                    backend:
+                    service:
+                        name: my-app # Replace if necessary
+                        port:
+                        number: 80
+    ```
+6. **Add the ingress to the /network Kustomization:**
+    ```yaml
+    # Update /infrastructure/network/kustomization.yaml:
+    apiVersion: kustomize.config.k8s.io/v1beta1
+    kind: Kustomization
+    resources:
+    - grafana-ingress.yaml
+    - my-app-ingress.yaml # <-- Add your ingress as a resource
+    ```
+
+
+Commit and Push Changes:
+
+Flux will automatically detect and deploy these applications.
+
+```bash
+git add .
+git commit -m "Deploy production applications"
+git push origin main
+```
 
 ## Uses
 - [fluxcd](https://fluxcd.io) - GitOps for Kubernetes
