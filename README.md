@@ -1,5 +1,7 @@
-## K8s Flux Stack
+## K8s Flux Cluster Starter
 A starter template for deploying a Kubernetes cluster using FluxCD for GitOps, integrated with essential tools like Harbor (container registry), Prometheus & Grafana (monitoring and visualization), and Terraform for managing secrets on AWS. This repository provides a structured approach to managing your Kubernetes infrastructure and applications declaratively through Git.
+
+This project and its README are a constant work in progress, feel free to submit issues, pull requests, and suggestions!
 
 
 ### Features
@@ -72,26 +74,26 @@ Finally create a directory in the bucket we can use to store our state file, e.g
 The repository ships with an empty template for `terraform/terraform.tfvars` and `terraform/state.config`. We need to setup the actual files with our values.
 
 1. Copy our empty template files to the actual files which will be ignored by our `.gitignore`:
-```bash
-make setup-terraform-templates
-# OR if you don't have Make
-./scripts/setup-terraform-templates.sh
-```
+    ```bash
+    make setup-terraform-templates
+    # OR if you don't have Make
+    ./scripts/setup-terraform-templates.sh
+    ```
 2. Update the `terraform.tfvars` and `state.config` files with your desired values.
-```bash
-# state.config
-bucket  = "" # The name of the bucket you manually created to store the state
-key     = "" # The key of the state file in the bucket, the prefix needs to be present
-# E.g: state/terraform.tfstate => state directory must be present in bucket, but not the state file
-region  = "" # The AWS Region you created the bucket in
-profile = "" # The AWS profile you configured to use with aws cli (typically 'default')
-             # Can also be found in ~/.aws/credentials
-```
-```bash
-# terraform.tfvars
-aws_region = "" # Your preferred AWS region (currently used for secret manager)
-harbor_admin_password = "" # Whatever password you wish to use for the harbor admin account
-```
+    ```bash
+    # state.config
+    bucket  = "" # The name of the bucket you manually created to store the state
+    key     = "" # The key of the state file in the bucket, the prefix needs to be present
+    # E.g: state/terraform.tfstate => state directory must be present in bucket, but not the state file
+    region  = "" # The AWS Region you created the bucket in
+    profile = "" # The AWS profile you configured to use with aws cli (typically 'default')
+                # Can also be found in ~/.aws/credentials
+    ```
+    ```bash
+    # terraform.tfvars
+    aws_region = "" # Your preferred AWS region (currently used for secret manager)
+    harbor_admin_password = "" # Whatever password you wish to use for the harbor admin account
+    ```
 
 
 #### 4. Configure AWS with Terraform
@@ -133,51 +135,49 @@ This command sets up Flux controllers in your cluster and configures them to syn
 The `clusters` folder contains the main configuration for each cluster managed by flux in the repository. Each cluster is managed separately through the use of Kustomizations.
 
 1. **Navigate to the Cluster Configuration Directory:**
-
-```bash
-cd ../clusters/development
-```
+    ```bash
+    cd ../clusters/development
+    ```
 2. **Ensure Infrastructure & Apps Kustomizations Are Defined:**
+    The `/clusters/development` & `/clusters/production` directory contains Kustomization manifests that define the order of deployment using dependencies. There are currently two files: `apps.yaml` and `infrastructure.yaml`. These define the dependency resolution order of the Kustomize overlays.
 
-The `/clusters/development` & `/clusters/production` directory contains Kustomization manifests that define the order of deployment using dependencies. There are currently two files: `apps.yaml` and `infrastructure.yaml`. These define the dependency resolution order of the Kustomize overlays.
-
-Flux will automatically detect and apply these Kustomizations in the correct order.
+    Flux will automatically detect and apply these Kustomizations in the correct order.
 
 3. Apply changes
-Make any changes that you desire, such as interval timings for Kustomizations and push the new changes to GitHub.
-```bash
-git add .
-git commit -m "Update infrastructure"
-git push origin main
-```
+    Make any changes that you desire, such as interval timings for Kustomizations and push the new changes to GitHub.
+    ```bash
+    git add .
+    git commit -m "Update infrastructure"
+    git push origin main
+    ```
 
 4. Wait for Flux to reconcile the changes
-Flux will automatically reconcile the changes and deploy the infrastructure components based on our interval settings. Alternatively we can manually trigger a reconciliation for the system manually on our cluster:
-```bash
-flux reconcile ks flux-system --with-source
-```
+    Flux will automatically reconcile the changes and deploy the infrastructure components based on our interval settings. Alternatively we can manually trigger a reconciliation for the system manually on our cluster:
+    ```bash
+    flux reconcile ks flux-system --with-source
+    ```
 
 5. Monitor the progress
-We can view the progress of the reconciliation by checking the logs in the Flux system namespace:
-```bash
-kubectl logs deployments/helm-controller -n flux-system
-kubectl logs deployments/kustomize-controller -n flux-system
-kubectl logs deployments/source-controller -n flux-system
-kubectl logs deployments/notification-controller -n flux-system
-```
-The `kustomize-controller` is typically where you want to look during a reconciliation, but the other controllers are also involved. For example if there is an update to a HelmRepository or HelmRelase the `helm-controller` would be the one to check.
+    We can view the progress of the reconciliation by checking the logs in the Flux system namespace:
+    ```bash
+    kubectl logs deployments/helm-controller -n flux-system
+    kubectl logs deployments/kustomize-controller -n flux-system
+    kubectl logs deployments/source-controller -n flux-system
+    kubectl logs deployments/notification-controller -n flux-system
+    ```
+    The `kustomize-controller` is typically where you want to look during a reconciliation, but the other controllers are also involved. For example if there is an update to a HelmRepository or HelmRelase the `helm-controller` would be the one to check.
 
 6. Verify Infrastructure
-Ensure everything is still running as expected:
-```bash
-flux get kustomizations -A
-```
-Should display that all kustomizations are up to date and ready.
+    Ensure everything is still running as expected:
+    ```bash
+    flux get kustomizations -A
+    ```
+    Should display that all kustomizations are up to date and ready.
 
-```bash
-kubectl get all -n flux-system
-```
-Should display all the resources that Flux has deployed in a consistent state.
+    ```bash
+    kubectl get all -n flux-system
+    ```
+    Should display all the resources that Flux has deployed in a consistent state.
 
 #### 9. Deploy your own apps
 Deploy your applications using Flux.
