@@ -1,5 +1,5 @@
 ## K8s Flux Cluster Starter
-A starter template for deploying a Kubernetes cluster using FluxCD for GitOps, integrated with essential tools like Harbor (container registry), Prometheus & Grafana (monitoring and visualization), and Terraform for managing secrets on AWS. This repository provides a structured approach to managing your Kubernetes infrastructure and applications declaratively through Git.
+A starter template for deploying a Kubernetes cluster using FluxCD for GitOps, integrated with essential tools like Harbor (artifact registry), Prometheus & Grafana (monitoring and visualization), and Terraform for managing secrets on AWS. This repository provides a structured approach to managing your Kubernetes infrastructure and applications declaratively through Git.
 
 This project and its README are a constant work in progress, feel free to submit issues, pull requests, and suggestions!
 
@@ -321,7 +321,8 @@ git push origin main
 
 ## Roadmap
 - Improve documentation
+- Add pre-commit hooks
 - Implement RBAC & Network policies to restrict cross-namespace access
-- Implement testing
+- Implement automated testing for manifests
 - Add sample apps
 - Add a unified logging layer using Fluentd
