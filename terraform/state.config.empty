@@ -1,0 +1,5 @@
+# state.config
+bucket  = "" 
+key     = ""
+region  = ""
+profile = ""

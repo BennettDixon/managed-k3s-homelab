@@ -1,0 +1,2 @@
+# Kube-prometheus-stack
+This app is provided by the prometheus community [here](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack). It adds Prometheus and Grafana for an out-of-the-box monitoring solution in the cluster.

@@ -1,0 +1,41 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: harbor
+  namespace: harbor
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+spec:
+  chart:
+    spec:
+      # Pinned => update manually
+      version: 1.16.1
+  values:
+    externalURL: https://harbor.internal
+    # The name of the secret where to find harbor admin password
+    existingSecretAdminPassword: harbor-admin-password
+    # The name of the key in the secret where to find harbor admin password Harbor
+    existingSecretAdminPasswordKey: harborAdminPassword
+    expose:
+      ingress:
+        controller: default
+        enabled: true
+        hosts:
+          core: harbor.internal
+          notary: notary.harbor.internal
+        annotations:
+          cert-manager.io/cluster-issuer: "letsencrypt"
+    persistence:
+      persistentVolumeClaim:
+        # Adjust based on your storage options
+        registry:
+          size: 5Gi
+        redis:
+          size: 1Gi
+    redis:
+      internal:
+        # Adjust based on your resource options
+        resources:
+          memory: 256Mi
+          cpu: 100m
+
