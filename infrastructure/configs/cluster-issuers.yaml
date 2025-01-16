@@ -7,7 +7,7 @@ spec:
   acme:
     # Replace the email address with your own contact email
     email: your-email@example.com
-    # The server is replaced in /clusters/production/infrastructure.yaml
+    # The server is replaced in /clusters/homelab-prod/infrastructure.yaml
     server: https://acme-staging-v02.api.letsencrypt.org/directory
     privateKeySecretRef:
       name: letsencrypt-nginx
