@@ -115,7 +115,7 @@ terraform apply
 Setup a simple K3s cluster for testing the app, setup K3s or Rancher Desktop. Alternatively you can use an existing cluster, but you may need to tweak the ingress controller if you don't use K3s.
 
 #### 7. Bootstrap Flux
-Bootstrap Flux to watch the repository and manage the cluster configuration.
+Bootstrap Flux on your cluster to watch the repository and manage the cluster configuration.
 ```bash
 flux bootstrap github \
   --owner=<your-github-username> \
@@ -123,6 +123,7 @@ flux bootstrap github \
   --branch=main \
   --path=./clusters/development \
   --personal
+  --kubeconfig=/etc/rancher/k3s/k3s.yaml # Replace with your kubeconfig <-
 ```
 - **Parameters:**
   - `--owner`: Your GitHub username or organization.
