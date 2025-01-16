@@ -235,7 +235,7 @@ Deploy your applications using Flux.
     kind: Deployment
     metadata:
         name: my-app
-        namespace: default
+        namespace: my-app
     spec:
     replicas: 3
     selector:
