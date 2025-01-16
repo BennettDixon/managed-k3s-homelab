@@ -182,9 +182,12 @@ The `clusters` folder contains the main configuration for each cluster managed b
 #### 9. Configure DNS
 We need to configure DNS records for Harbor and Grafana to point to our ingress controller.
 
-`/apps/base/<cluster>/harbor-values.yaml` contains the DNS configuration for Harbor. It runs on your local network out of the box on the domain `internal`. The Grafana app also uses the same configuration located at `/infrastructure/network/grafana-ingress.yaml`. If you wish to change to your own Domain update both files.
+- `/apps/base/<cluster>/harbor-values.yaml` contains the DNS configuration for the Harbor Ingress
+- `/infrastructure/network/grafana-ingress.yaml` contains the DNS configuration for the Grafana Ingress
 
-Grab the ingress IP:
+It runs on your local network out of the box on the domain `internal`, but you can change it to your desired domain.
+
+**Grab the ingress IP:**
 ```bash
 kubectl get ingress -A'
 ```
