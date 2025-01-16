@@ -1,5 +1,5 @@
 ## K8s Flux Stack
-A starter template for deploying a Kubernetes cluster using Flux GitOps, integrated with essential tools like Harbor (container registry), Prometheus & Grafana (monitoring and visualization), and Terraform for managing secrets on AWS. This repository provides a structured approach to managing your Kubernetes infrastructure and applications declaratively through Git.
+A starter template for deploying a Kubernetes cluster using FluxCD for GitOps, integrated with essential tools like Harbor (container registry), Prometheus & Grafana (monitoring and visualization), and Terraform for managing secrets on AWS. This repository provides a structured approach to managing your Kubernetes infrastructure and applications declaratively through Git.
 
 
 ### Features
@@ -39,21 +39,21 @@ k8s-flux-starter/
 ```
 
 ### Prerequisites
-1. Kubernetes Cluster >= 1.29 - if not using K3s you will need to customize the ingress controller.
+1. **Kubernetes Cluster >= 1.29:**  if not using K3s you will need to customize the ingress controller.
   - **Local Cluster:** K3s, Kind, Minikube, etc.
   - **Managed Cluster:** AWS EKS, GKE, AKS, etc.
-2. Flux CLI
+2. **Flux CLI:**
 Flux CLI will be used to bootstrap flux on the cluster. Ensure FluxCLI is installed on your cluster machine or wherever you apply kubectl commands. Refer to the Flux [CLI Installation Guide](https://fluxcd.io/flux/installation/#install-the-flux-cli).
-3. Terraform
+3. **Terraform:**
 Ensure Terraform is installed on your development machine. Follow the [Terraform Installation Guide](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli) for your preferred installation method.
-4. AWS CLI
+4. **AWS CLI:**
 We will be utilize AWS as our state backend for Terraform, as well as our secrets manager. Ensure AWS CLI is installed on your development machine for use with Terraform. If you would like to use a different cloud provider you can customize the Terraform configuration. Refer to the [AWS CLI Installation Guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) for your preferred installation method.
 
 Ensure AWS CLI is configured with your access tokens; I recommend creating a dedicated IAM user for Terraform.
 ```bash
 aws configure
 ```
-5. Make (optional)
+5. **Make (optional):**
 This repository uses Make to manage the terraform and flux setup. Technically it is not required, but it will make setup a bit easier. Refer to the [CMake Installation Guide](https://cmake.org/download/) for your preferred installation method.
 
 ### Setup Guide
