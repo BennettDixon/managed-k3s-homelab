@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - ../base/podinfo
   - ../base/harbor
+  - ../base/kube-prometheus-stack
 patches:
   - path: podinfo-values.yaml
     target:
