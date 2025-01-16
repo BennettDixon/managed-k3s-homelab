@@ -1,0 +1,23 @@
+# /apps/base/my-app/my-app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: personal-site
+  namespace: personal-site
+spec:
+  replicas: 3
+  selector:
+      matchLabels:
+        app: personal-site
+  template:
+      metadata:
+          labels:
+            app: personal-site
+      spec:
+        imagePullSecrets:
+          - name: harbor-docker-login
+        containers:
+          - name: personal-site
+            image: harbor.internal/personal-blog/astro-ssr:latest
+            ports:
+              - containerPort: 80
