@@ -122,7 +122,7 @@ flux bootstrap github \
   --repository=<your-repository-name> \
   --branch=main \
   --path=./clusters/development \
-  --personal
+  --personal \
   --kubeconfig=/etc/rancher/k3s/k3s.yaml # Replace with your kubeconfig <-
 ```
 - **Parameters:**
