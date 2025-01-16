@@ -3,8 +3,13 @@ kind: Kustomization
 resources:
   - ../base/harbor
   - ../base/kube-prometheus-stack
+  - ../base/jupyterhub
 patches:
   - path: harbor-values.yaml
     target:
       kind: HelmRelease
       name: harbor
+  - path: jupyterhub-values.yaml
+    target:
+      kind: HelmRelease
+      name: jupyterhub

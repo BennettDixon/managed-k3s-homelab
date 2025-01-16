@@ -1,0 +1,22 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: jupyterhub
+  namespace: jupyterhub
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+spec:
+  chart:
+    spec:
+      # Pinned => update manually
+      version: 4.1.0
+  values:
+    proxy:
+      https:
+        enabled: true
+        hosts:
+          - jupyterhub.internal
+        letsencrypt:
+          # Replace with your email
+          contactEmail: your-email@example.com
+
