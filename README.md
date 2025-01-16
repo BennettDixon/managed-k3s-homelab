@@ -114,7 +114,7 @@ terraform apply
 #### 6. Setup Kubernetes Cluster
 Setup a simple K3s cluster for testing the app, setup K3s or Rancher Desktop. Alternatively you can use an existing cluster, but you may need to tweak the ingress controller if you don't use K3s.
 
-#### 7. Install Flux
+#### 7. Bootstrap Flux
 Bootstrap Flux to watch the repository and manage the cluster configuration.
 ```bash
 flux bootstrap github \
