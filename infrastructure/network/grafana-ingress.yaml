@@ -4,9 +4,11 @@ metadata:
   name: grafana-ingress
   namespace: kube-prometheus-stack
   annotations:
-    kubernetes.io/ingress.class: "nginx"
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    # If not running on k3s, replace with your ingress controller
+    kubernetes.io/ingress.class: "traefik"
     cert-manager.io/cluster-issuer: "letsencrypt"
+  labels:
+    app: kube-prometheus-stack
 spec:
   tls:
   - hosts:
