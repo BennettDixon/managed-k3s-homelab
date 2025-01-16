@@ -26,3 +26,4 @@ spec:
         - secretName: jupyterhub-tls # Cert-Manager will manage this secret
           hosts:
             - jupyterhub.internal
+
