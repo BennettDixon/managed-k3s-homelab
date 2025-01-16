@@ -9,3 +9,7 @@ show-grafana-login:
 	@echo "\nPassword: "
 	kubectl get secret -n kube-prometheus-stack kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d
 	@echo "\n"
+
+.PHONY: setup-terraform-templates
+setup-terraform-templates:
+	@./scripts/setup-terraform-templates
