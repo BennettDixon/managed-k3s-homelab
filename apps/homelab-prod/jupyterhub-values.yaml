@@ -12,14 +12,13 @@ spec:
       version: 4.1.0
   values:
     proxy:
-      service: ClusterIP
+      service: 
+        type: ClusterIP
       https:
         enabled: true
-      ingress:
-        enabled: true
-        ingressClassName: traefik
-        annotations:
-          kubernetes.io/ingress.class: "traefik"
+    ingress:
+      enabled: true
+      ingressClassName: traefik
       hosts:
         - jupyterhub.internal
       tls:
