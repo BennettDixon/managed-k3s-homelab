@@ -180,22 +180,25 @@ The `clusters` folder contains the main configuration for each cluster managed b
     Should display all the resources that Flux has deployed in a consistent state.
 
 #### 9. Configure DNS
-Configure DNS records for Harbor & Grafana.
+`/apps/base/<cluster>/harbor-values.yaml` contains the DNS configuration for Harbor. It runs on your local network out of the box on the domain `internal`. The Grafana app also uses the same configuration located at `/infrastructure/network/grafana-ingress.yaml`. If you wish to change to your own Domain update both files.
+
+Finally configure DNS records for Harbor & Grafana. For my homelab setup on my local network I added these to my Unbound DNS server as overrides on my OPNSense box. Check out more info about my homelab [on my blog](https://bennettdixon.dev/blog?tag=homelab).
 ```yaml
 Host: harbor
-Domain: <your-domain>
+Domain: <your-domain> # e.g internal
 Type: A
-Value: <your-ingress-ip>
+Value: <your-ingress-ip> # e.g 10.0.10.42
 Description: Harbor Server
 ```
 ```yaml
 Host: grafana
-Domain: <your-domain>
+Domain: <your-domain> # e.g internal
 Type: A
-Value: <your-ingress-ip>
-Description: Harbor Server
+Value: <your-ingress-ip> # e.g 10.0.10.42
+Description: Grafana Monitoring Dashboard
 ```
-For my homelab setup I added these to my Unbound DNS server as overrides on my OPNSense box. Check out more info about my homelab [on my blog](https://bennettdixon.dev/blog?tag=homelab).
+**Note**: The ingress IP should be the same for both records, only change the Host to allow the ingress service to resolve correctly.
+
 
 ### Deploy your own apps
 Deploy your applications using Flux.
