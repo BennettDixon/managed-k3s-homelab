@@ -179,7 +179,25 @@ The `clusters` folder contains the main configuration for each cluster managed b
     ```
     Should display all the resources that Flux has deployed in a consistent state.
 
-#### 9. Deploy your own apps
+#### 9. Configure DNS
+Configure DNS records for Harbor & Grafana.
+```yaml
+Host: harbor
+Domain: <your-domain>
+Type: A
+Value: <your-ingress-ip>
+Description: Harbor Server
+```
+```yaml
+Host: grafana
+Domain: <your-domain>
+Type: A
+Value: <your-ingress-ip>
+Description: Harbor Server
+```
+For my homelab setup I added these to my Unbound DNS server as overrides on my OPNSense box. Check out more info about my homelab [on my blog](https://bennettdixon.dev/blog?tag=homelab).
+
+### Deploy your own apps
 Deploy your applications using Flux.
 
 1. **Navigate to the base applications Directory:**
