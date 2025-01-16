@@ -1,6 +1,3 @@
-.PHONY: terraform-init
-terraform-init:
-	@cd terraform && terraform init --backend-config ./state.config
 
 .PHONY: show-grafana-login
 show-grafana-login:

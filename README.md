@@ -100,7 +100,7 @@ The repository ships with an empty template for `terraform/terraform.tfvars` and
 Navigate to the Terraform directory and initialize the workspace.
 ```bash
 cd terraform
-terraform init
+terraform init --backend-config ./state.config
 ```
 
 #### 5. Provision AWS Resources
