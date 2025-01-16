@@ -3,6 +3,8 @@ kind: HelmRelease
 metadata:
   name: harbor
   namespace: harbor
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
 spec:
   chart:
     spec:

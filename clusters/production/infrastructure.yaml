@@ -1,4 +1,5 @@
 ---
+# Infra controllers first
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -15,6 +16,7 @@ spec:
   prune: true
   wait: true
 ---
+# Setup infra configs after controllers are setup
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -39,3 +41,23 @@ spec:
       target:
         kind: ClusterIssuer
         name: letsencrypt
+---
+# Setup network after apps & infra is setup
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-network
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: infra-configs
+    - name: apps
+  interval: 1h
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/network
+  prune: true
+  wait: true
