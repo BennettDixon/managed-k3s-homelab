@@ -13,6 +13,7 @@ module "harbor_docker_pull_secret" {
     username = var.harbor_docker_pull_username
     password = var.harbor_docker_pull_password
     registry = var.harbor_registry_domain
+    email = var.harbor_docker_pull_email
   })
 }
 

@@ -3,6 +3,11 @@ output "harbor_admin_secret_arn" {
   description = "The ARN of the Secrets Manager secret for Harbor admin password"
 }
 
+output "harbor_docker_pull_secret_arn" {
+  value       = module.harbor_docker_pull_secret.secret_arn
+  description = "The ARN of the Secrets Manager secret for Harbor Docker pull"
+}
+
 output "cluster_secret_reader_iam_role_arn" {
   value       = module.cluster_secret_reader.role_arn
   description = "The ARN of the IAM role for accessing Secrets Manager"

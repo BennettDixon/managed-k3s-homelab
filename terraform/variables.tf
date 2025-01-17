@@ -22,6 +22,12 @@ variable "harbor_docker_pull_password" {
   sensitive   = true
 }
 
+variable "harbor_docker_pull_email" {
+  description = "Email for Harbor Docker pull account"
+  type        = string
+  default     = "default@example.com"
+}
+
 variable "harbor_registry_domain" {
   description = "Domain for Harbor registry"
   type        = string
