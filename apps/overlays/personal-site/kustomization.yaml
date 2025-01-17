@@ -4,7 +4,7 @@ namespace: personal-site
 resources:
   - ../../../overlay-templates/harbor-default-registry-login-secret.yaml
 patches:
-  - path: default-registry-harbor-docker-login.yaml
+  - path: default-registry-login-secret.yaml
     target:
       kind: ExternalSecret
       name: default-registry-harbor-docker-login
