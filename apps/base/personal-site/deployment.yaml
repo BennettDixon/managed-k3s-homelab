@@ -15,7 +15,14 @@ spec:
             app: personal-site
       spec:
         imagePullSecrets:
-          - name: personal-site-harbor-docker-login
+          # This is the secret for the personal-site registry
+          - name: personal-site-registry-harbor-docker-login
+          # Technically we don't need this default secret yet;
+          # but we are using as an example how you would overlay 
+          # the secret namespaced in the `personal-site` namespace
+          # (see apps/overlays/personal-site/)
+          - name: default-registry-harbor-docker-login
+          
         containers:
           - name: personal-site
             image: harbor.internal/personal-blog/astro-ssr:latest

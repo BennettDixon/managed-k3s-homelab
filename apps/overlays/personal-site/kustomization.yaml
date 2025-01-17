@@ -3,4 +3,9 @@ kind: Kustomization
 namespace: personal-site
 resources:
   - ../../../overlay-templates/harbor-docker-login-secret.yaml
-nameSuffix: -personal-site
+patches:
+  - path: default-registry-harbor-docker-login.yaml
+    target:
+      kind: ExternalSecret
+      name: default-registry-harbor-docker-login
+
