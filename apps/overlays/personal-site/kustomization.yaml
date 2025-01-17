@@ -7,5 +7,5 @@ patches:
   - path: default-registry-login-secret.yaml
     target:
       kind: ExternalSecret
-      name: default-registry-harbor-docker-login
+      name: default-harbor-docker-login
 
