@@ -3,8 +3,13 @@ output "harbor_admin_secret_arn" {
   description = "The ARN of the Secrets Manager secret for Harbor admin password"
 }
 
-output "harbor_docker_pull_secret_arn" {
-  value       = module.harbor_docker_pull_secret.secret_arn
+output "default_harbor_docker_pull_secret_arn" {
+  value       = module.default_harbor_docker_pull_secret.secret_arn
+  description = "The ARN of the Secrets Manager secret for Harbor Docker pull"
+}
+
+output "personal_site_harbor_docker_pull_secret_arn" {
+  value       = module.personal_site_harbor_docker_pull_secret.secret_arn
   description = "The ARN of the Secrets Manager secret for Harbor Docker pull"
 }
 

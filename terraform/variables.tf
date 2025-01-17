@@ -10,26 +10,44 @@ variable "harbor_admin_password" {
   sensitive   = true
 }
 
-variable "harbor_docker_pull_username" {
-  description = "Username for Harbor Docker pull"
+variable "harbor_registry_domain" {
+  description = "Root domain for harbor registries"
+  type        = string
+  default     = "harbor.internal"
+}
+
+variable "default_harbor_docker_pull_username" {
+  description = "Username for default registry - Harbor Docker pull"
   type        = string
   sensitive   = true
 }
 
-variable "harbor_docker_pull_password" {
-  description = "Password for Harbor Docker pull"
+variable "default_harbor_docker_pull_password" {
+  description = "Password for default registry - Harbor Docker pull"
   type        = string
   sensitive   = true
 }
 
-variable "harbor_docker_pull_email" {
-  description = "Email for Harbor Docker pull account"
+variable "default_harbor_docker_pull_email" {
+  description = "Email for default registry -  Harbor Docker pull"
   type        = string
   default     = "default@example.com"
 }
 
-variable "harbor_registry_domain" {
-  description = "Domain for Harbor registry"
+variable "personal_site_harbor_docker_pull_username" {
+  description = "Username for personal site registry - Harbor Docker pull"
   type        = string
-  default     = "harbor.internal"
+  sensitive   = true
+}
+
+variable "personal_site_harbor_docker_pull_password" {
+  description = "Password for personal site registry -  Harbor Docker pull"
+  type        = string
+  sensitive   = true
+}
+
+variable "personal_site_harbor_docker_pull_email" {
+  description = "Email for personal site registry -  Harbor Docker pull account"
+  type        = string
+  default     = "default@example.com"
 }

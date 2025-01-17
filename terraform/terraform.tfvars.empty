@@ -1,3 +1,0 @@
-aws_region = "us-east-1"
-harbor_admin_password = "your-password"
-harbor_docker_pull_email = "default@example.com"
