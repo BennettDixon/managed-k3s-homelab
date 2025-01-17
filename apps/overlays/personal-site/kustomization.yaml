@@ -8,9 +8,4 @@ patches:
     target:
       kind: ExternalSecret
       name: default-registry-harbor-docker-login
-  - path: default-service-account.yaml
-    target:
-      kind: ServiceAccount
-      name: default
-      namespace: personal-site
 
