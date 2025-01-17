@@ -15,7 +15,7 @@ spec:
             app: personal-site
       spec:
         imagePullSecrets:
-          - name: harbor-docker-login
+          - name: personal-site-harbor-docker-login
         containers:
           - name: personal-site
             image: harbor.internal/personal-blog/astro-ssr:latest
