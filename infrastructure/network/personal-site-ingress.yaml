@@ -25,7 +25,7 @@ spec:
           service:
             name: personal-site
             port:
-              number: 4321
+              number: 80
   - host: bennettdixon.dev
     http:
       paths:
@@ -35,4 +35,4 @@ spec:
           service:
             name: personal-site
             port:
-              number: 4321
+              number: 80

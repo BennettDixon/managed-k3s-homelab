@@ -3,3 +3,4 @@ kind: Kustomization
 namespace: personal-site
 resources:
     - deployment.yaml
+    - service.yaml
