@@ -22,3 +22,8 @@ output "cluster_secret_reader_iam_policy_arn" {
   value       = module.cluster_secret_reader.policy_arn
   description = "The ARN of the IAM policy attached to the IAM role"
 }
+
+output "tailscale_oauth_secret_arn" {
+  value       = module.tailscale_oauth_secret.secret_arn
+  description = "The ARN of the Secrets Manager secret for Tailscale OAuth"
+}

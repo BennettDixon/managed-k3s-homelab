@@ -29,6 +29,16 @@ module "personal_site_harbor_docker_pull_secret" {
   })
 }
 
+module "tailscale_oauth_secret" {
+  source = "./modules/secrets_manager"
+  secret_name = "k3s_tailscale_oauth"
+  description = "Tailscale OAuth secret"
+  secret_value = jsonencode({
+    client_id = var.tailscale_oauth_client_id
+    client_secret = var.tailscale_oauth_client_secret
+  })
+}
+
 module "cluster_secret_reader" {
   source       = "./modules/iam"
   role_name    = "k3s-cluster-secrets-access-role"
