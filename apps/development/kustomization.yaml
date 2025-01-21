@@ -5,6 +5,7 @@ resources:
   - ../base/kube-prometheus-stack
   - ../base/jupyterhub
   - ../base/personal-site
+  - ../base/tailscale
 patches:
   - path: harbor-values.yaml
     target:
