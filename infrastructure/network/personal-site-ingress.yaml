@@ -1,0 +1,38 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: personal-site-ingress
+  namespace: kube-prometheus-stack
+  annotations:
+    # If not running on k3s, replace with your ingress controller
+    kubernetes.io/ingress.class: "traefik"
+    cert-manager.io/cluster-issuer: "letsencrypt"
+  labels:
+    app: kube-prometheus-stack
+spec:
+  tls:
+  - hosts:
+    - personal-site.internal  # Replace with your domain
+    - bennettdixon.dev
+    secretName: personal-site-tls-secret  # Cert-Manager will manage this secret
+  rules:
+  - host: personal-site.internal
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: personal-site
+            port:
+              number: 80
+  - host: bennettdixon.dev
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: personal-site
+            port:
+              number: 80
