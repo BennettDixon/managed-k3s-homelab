@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: personal-site-ingress
-  namespace: kube-prometheus-stack
+  namespace: personal-site
   annotations:
     # If not running on k3s, replace with your ingress controller
     kubernetes.io/ingress.class: "traefik"
