@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: personal-site
 resources:
-  - ../../../overlay-templates/harbor-default-registry-login-secret.yaml
+  - ../templates/harbor-default-registry-login-secret.yaml
 patches:
   - path: default-registry-login-secret.yaml
     target:
