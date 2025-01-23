@@ -4,6 +4,7 @@ resources:
   - ../base/harbor
   - ../base/kube-prometheus-stack
   - ../base/jupyterhub
+  - ../base/tailscale
   - ../base/personal-site
 patches:
   - path: harbor-values.yaml
