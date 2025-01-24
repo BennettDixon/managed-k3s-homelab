@@ -4,10 +4,10 @@ metadata:
   name: tailscale
   namespace: tailscale
 spec:
-  releaseName: tailscale
+  releaseName: tailscale-operator
   chart:
     spec:
-      chart: tailscale
+      chart: tailscale-operator
       sourceRef:
         kind: HelmRepository
         name: tailscale
