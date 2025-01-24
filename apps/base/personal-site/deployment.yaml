@@ -28,3 +28,16 @@ spec:
             image: harbor.internal/personal-blog/astro-ssr:latest
             ports:
               - containerPort: 80
+            env:
+              - name: NODE_ENV
+                value: production
+              - name: GMAIL_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: contact-me-gmail-account-details
+                    key: username
+              - name: GMAIL_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: contact-me-gmail-account-details
+                    key: password
