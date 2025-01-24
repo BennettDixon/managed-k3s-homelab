@@ -4,8 +4,9 @@ metadata:
   name: personal-site-ingress
   namespace: personal-site
   annotations:
-    # If not running on k3s, replace with your ingress controller
+    # Uses tailscale
     kubernetes.io/ingress.class: "tailscale"
+    tailscale.com/funnel: "true"
     cert-manager.io/cluster-issuer: "letsencrypt"
   labels:
     app: personal-site
@@ -14,6 +15,7 @@ spec:
   - hosts:
     - personal-site.internal  # Replace with your domain
     - bennettdixon.dev
+    - funnel
     secretName: personal-site-tls-secret  # Cert-Manager will manage this secret
   rules:
   - host: personal-site.internal
