@@ -8,7 +8,7 @@ spec:
   chart:
     spec:
       # Pinned => update manually
-      version: 4.1.0
+      version: 1.78.3
   valuesFrom:
     - kind: Secret
       name: tailscale-oauth-client
