@@ -5,6 +5,10 @@ metadata:
   namespace: tailscale
 spec:
   releaseName: tailscale-operator
+  chart:
+    spec:
+      # Pinned => update manually
+      version: 1.78.3
   valuesFrom:
     - kind: Secret
       name: tailscale-oauth-client

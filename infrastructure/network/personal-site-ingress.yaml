@@ -5,7 +5,7 @@ metadata:
   namespace: personal-site
   annotations:
     # If not running on k3s, replace with your ingress controller
-    kubernetes.io/ingress.class: "traefik"
+    kubernetes.io/ingress.class: "tailscale"
     cert-manager.io/cluster-issuer: "letsencrypt"
   labels:
     app: personal-site
