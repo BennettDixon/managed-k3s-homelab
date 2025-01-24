@@ -5,11 +5,11 @@ metadata:
   namespace: kube-prometheus-stack
   annotations:
     # If not running on k3s, replace with your ingress controller
-    kubernetes.io/ingress.class: "traefik"
     cert-manager.io/cluster-issuer: "letsencrypt"
   labels:
     app: kube-prometheus-stack
 spec:
+  ingressClassName: traefik
   tls:
   - hosts:
     - grafana.internal  # Replace with your domain

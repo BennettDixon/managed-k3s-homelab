@@ -4,13 +4,12 @@ metadata:
   name: personal-site-ingress
   namespace: personal-site
   annotations:
-    # Uses tailscale
-    kubernetes.io/ingress.class: "tailscale"
     tailscale.com/funnel: "true"
     cert-manager.io/cluster-issuer: "letsencrypt"
   labels:
     app: personal-site
 spec:
+  ingressClassName: tailscale
   tls:
   - hosts:
     - personal-site.internal  # Replace with your domain
