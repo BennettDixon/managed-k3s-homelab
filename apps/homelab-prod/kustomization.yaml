@@ -15,3 +15,7 @@ patches:
     target:
       kind: HelmRelease
       name: jupyterhub
+  - path: tailscale-values.yaml
+    target:
+      kind: HelmRelease
+      name: tailscale
