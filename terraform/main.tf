@@ -39,6 +39,16 @@ module "tailscale_oauth_secret" {
   })
 }
 
+module "contact_me_gmail_account_details_secret" {
+  source = "./modules/secrets_manager"
+  secret_name = "contact_me_gmail_account_details"
+  description = "Contact me Gmail account details for personal site nodemailer"
+  secret_value = jsonencode({
+    username = var.contact_me_gmail_username
+    password = var.contact_me_gmail_password
+  })
+}
+
 module "cluster_secret_reader" {
   source       = "./modules/iam"
   role_name    = "k3s-cluster-secrets-access-role"

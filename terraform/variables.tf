@@ -63,3 +63,15 @@ variable "personal_site_harbor_docker_pull_email" {
   type        = string
   default     = "default@example.com"
 }
+
+variable "contact_me_gmail_username" {
+  description = "Gmail username for nodemailer on personal site contact form"
+  type        = string
+  sensitive   = true
+}
+
+variable "contact_me_gmail_password" {
+  description = "Gmail password for nodemailer on personal site contact form"
+  type        = string
+  sensitive   = true
+}

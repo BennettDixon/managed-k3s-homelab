@@ -27,3 +27,8 @@ output "tailscale_oauth_secret_arn" {
   value       = module.tailscale_oauth_secret.secret_arn
   description = "The ARN of the Secrets Manager secret for Tailscale OAuth"
 }
+
+output "contact_me_gmail_account_details_secret_arn" {
+  value       = module.contact_me_gmail_account_details_secret.secret_arn
+  description = "The ARN of the Secrets Manager secret for Gmail account details"
+}
