@@ -9,5 +9,7 @@ personal_site_harbor_docker_pull_password=""
 personal_site_harbor_docker_pull_email=""
 tailscale_oauth_client_id=""
 tailscale_oauth_client_secret=""
-contact_me_gmail_username="" # eg myname@gmail.com
+contact_me_gmail_username=""
+# This is an app password: 
+# https://myaccount.google.com/apppasswords
 contact_me_gmail_password=""
