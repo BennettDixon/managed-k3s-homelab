@@ -1,3 +1,13 @@
+# Create a lightsail instance for our public proxy
+module "public_proxy_tailscale_lightsail" {
+  source = "./modules/public_proxy_lightsail"
+
+  ls_instance_name = var.ls_instance_name
+  ls_availability_zone = var.ls_availability_zone
+  tailscale_auth_key = var.tailscale_auth_key
+}
+
+# Create secrets
 module "harbor_admin_password_secret" {
   source       = "./modules/secrets_manager"
   secret_name  = "k3s_harbor_admin_password"

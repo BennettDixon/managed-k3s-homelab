@@ -13,3 +13,4 @@ contact_me_gmail_username=""
 # This is an app password: 
 # https://myaccount.google.com/apppasswords
 contact_me_gmail_password=""
+tailscale_auth_key=""
