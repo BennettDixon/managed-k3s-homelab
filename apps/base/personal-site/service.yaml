@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: personal-site
   namespace: personal-site
+  annotations:
+    tailscale.com/expose: "true"
 spec:
   selector:
     app: personal-site
