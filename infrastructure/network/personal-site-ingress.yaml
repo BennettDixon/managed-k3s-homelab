@@ -4,7 +4,6 @@ metadata:
   name: personal-site-ingress
   namespace: personal-site
   annotations:
-    tailscale.com/funnel: "true"
     cert-manager.io/cluster-issuer: "letsencrypt"
   labels:
     app: personal-site
@@ -14,7 +13,6 @@ spec:
   - hosts:
     - personal-site.internal  # Replace with your domain
     - bennettdixon.dev
-    - funnel
     secretName: personal-site-tls-secret  # Cert-Manager will manage this secret
   rules:
   - host: personal-site.internal
