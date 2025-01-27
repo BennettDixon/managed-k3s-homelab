@@ -34,28 +34,17 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
 
     # Simple Nginx example
     cat <<NGINXCONF >/etc/nginx/sites-available/default
-    user www-data;
-    worker_processes auto;
-    pid /run/nginx.pid;
-
-    error_log /var/log/nginx/error.log;
-    include /etc/nginx/modules-enabled/*.conf;
-
-    events {
-        worker_connections 1024;
-    }
-
-    http {
-        # Server block for service1 (prefix: service1.mydomain.com)
-        server {
-            listen 80;
-            location / {
-                proxy_pass http://personal-site-personal-site;  # Tailscale IP for personal site
-                proxy_http_version 1.1;
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            }
+    # Personal site main page
+    server {
+        listen 80;
+        server_name _;
+        
+        location / {
+            proxy_pass http://personal-site-personal-site;  # Tailscale IP for personal site
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         }
     }
     NGINXCONF
