@@ -62,13 +62,9 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
 
     systemctl restart nginx
 
-    # Configure SSL Certificates for TLS termination using certbot
-    # This will automatically update /etc/nginx/sites-available/default
-    # server block we just made with the proper SSL settings from certbot
-    # YOU MUST RUN THESE MANUALLY AFTER SSHING TO THE SERVER OVER TAILSCALE
-    # certbot --nginx -d bennettdixon.dev -d www.bennettdixon.dev -m bennettdixon16@gmail.com --agree-tos -n
-    # Configure automatic renewal of certificates
-    # echo "0 0,12 * * * root /opt/certbot/bin/python -c 'import random; import time; time.sleep(random.random() * 3600)' && sudo certbot renew -q" | sudo tee -a /etc/crontab > /dev/null
+    # BE SURE TO CONFIGURE THE SSL CERTS WITH CERTBOT VIA SSH
+    # ONCE SETUP OF VM IS COMPLETE
+    # (SEE README FOR INSTRUCTIONS)
   EOF
 }
 
