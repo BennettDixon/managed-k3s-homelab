@@ -39,7 +39,7 @@ spec:
                   secretKeyRef:
                     name: contact-me-gmail-account-details
                     key: username
-              - name: GMAIL_PASSWORD
+              - name: GMAIL_PASS
                 valueFrom:
                   secretKeyRef:
                     name: contact-me-gmail-account-details

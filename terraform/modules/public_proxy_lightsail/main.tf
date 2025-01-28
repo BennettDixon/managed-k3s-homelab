@@ -56,8 +56,26 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            # Astro requires this since we terminate SSL
+            proxy_set_header Origin http://\$host;
         }
     }
+    # Redirect www to root
+    server {
+        server_name www.bennettdixon.dev;
+        # DELETE listen 80 for listen 443 once configured w/ ssl
+        listen 80;
+
+        # Add this manually or via certbot when configured
+        # listen 443 ssl;
+        # ssl_certificate /etc/letsencrypt/live/bennettdixon.dev/fullchain.pem;
+        # ssl_certificate_key /etc/letsencrypt/live/bennettdixon.dev/privkey.pem;
+        # include /etc/letsencrypt/options-ssl-nginx.conf;
+        # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+        return 301 https://bennettdixon.dev$request_uri;
+    }
+    
     NGINXCONF
 
     systemctl restart nginx
