@@ -39,10 +39,6 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
     # Link certbot to /usr/bin
     ln -s /opt/certbot/bin/certbot /usr/bin/certbot
 
-    # Certbot start commented out for now
-    # certbot certonly --nginx -d bennettdixon.dev -d www.bennettdixon.dev -m bennettdixon16@gmail.com --agree-tos -n
-    # echo "0 0,12 * * * root /opt/certbot/bin/python -c 'import random; import time; time.sleep(random.random() * 3600)' && sudo certbot renew -q" | sudo tee -a /etc/crontab > /dev/null
-
     # Start tailscaled and authenticate (example using inline auth key - not recommended for production)
     # In production, consider a more secure approach (retrieving from Secrets Manager, etc.).
     (tailscaled --tun=userspace-networking &)
@@ -51,33 +47,9 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
 
     # Simple Nginx example
     cat <<NGINXCONF >/etc/nginx/sites-available/default
-    # Redirect HTTP to HTTPS
-    server {
-        listen 80;
-        server_name bennettdixon.dev www.bennettdixon.dev;
-        return 301 https://bennettdixon.dev$request_uri;
-    }
-    # Redirect www. to root
-    server {
-        listen 443 ssl;
-        server_name www.bennettdixon.dev;
-
-        # SSL certificates for www.
-        ssl_certificate /etc/letsencrypt/live/bennettdixon.dev/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/bennettdixon.dev/privkey.pem;
-
-        # Redirect to root domain
-        return 301 https://bennettdixon.dev$request_uri;
-    }
-    
     # Root domain
     server {
-        listen 443 ssl;
-        server_name bennettdixon.dev;
-
-        # Use the Let's Encrypt certificates
-        ssl_certificate /etc/letsencrypt/live/bennettdixon.dev/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/bennettdixon.dev/privkey.pem;
+        server_name www.bennettdixon.dev bennettdixon.dev;
 
         location / {
             proxy_pass http://personal-site-personal-site;  # Tailscale IP for personal site
@@ -86,10 +58,16 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         }
     }
-
     NGINXCONF
 
     systemctl restart nginx
+
+    # Configure SSL Certificates for TLS termination using certbot
+    # This will automatically update /etc/nginx/sites-available/default
+    # server block we just made with the proper SSL settings from certbot
+    certbot --nginx -d bennettdixon.dev -d www.bennettdixon.dev -m bennettdixon16@gmail.com --agree-tos -n
+    # Configure automatic renewal of certificates
+    echo "0 0,12 * * * root /opt/certbot/bin/python -c 'import random; import time; time.sleep(random.random() * 3600)' && sudo certbot renew -q" | sudo tee -a /etc/crontab > /dev/null
   EOF
 }
 
