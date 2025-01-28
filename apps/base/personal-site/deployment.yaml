@@ -25,12 +25,15 @@ spec:
           
         containers:
           - name: personal-site
-            image: harbor.internal/personal-blog/astro-ssr:latest
+            image: harbor.internal/personal-blog/astro-ssr:0.0.1
+            imagePullPolicy: Always
             ports:
               - containerPort: 80
             env:
               - name: NODE_ENV
                 value: production
+              - name: ORIGIN
+                value: https://bennettdixon.dev
               - name: GMAIL_USER
                 valueFrom:
                   secretKeyRef:
