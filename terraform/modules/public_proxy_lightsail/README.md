@@ -5,8 +5,14 @@ This proxy will not scale well, but it is cheap and effective for my homelab set
 
 
 ## Prerequisites
-1. Generate a tailscale auth key that is ephemeral and only used for this instance. Tag it for ACL.
-2. Update tailscale ACL to allow communication from your tag for the instance to your desired destinations, e.g:
+1. Create a new tag for your proxy in tailscale:
+```yaml
+"tagOwners": {
+    "tag:proxy": ["group:ops"],
+}
+```
+2. Generate a tailscale auth key that is ephemeral and only used for this instance, tag the key with your new tag.
+3. Update tailscale ACL to allow communication from your tag for the instance to your desired destinations, e.g:
 
 ```yaml
 "acls": [
@@ -20,7 +26,7 @@ This proxy will not scale well, but it is cheap and effective for my homelab set
     // ...
 ]
 ```
-3. Update tailscale ACL to allow you ssh access to the instance via the tag:
+4. Update tailscale ACL to allow you ssh access to the instance via the tag:
 ```yaml
 // ...
 "ssh": [
