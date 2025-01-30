@@ -49,6 +49,17 @@ module "tailscale_oauth_secret" {
   })
 }
 
+# Secret for recaptcha verification on personal site
+module "personal_site_recaptcha_secret" {
+  source = "./modules/secrets_manager"
+  secret_name = "personal-site-recaptcha-secret"
+  description = "Recaptcha secret key for personal site"
+  secret_value = jsonencode({
+    secret_server_key = var.personal_site_recaptcha_secret_key
+    public_client_key = var.personal_site_recaptcha_public_key
+  })
+}
+
 module "contact_me_gmail_account_details_secret" {
   source = "./modules/secrets_manager"
   secret_name = "contact_me_gmail_account_details"

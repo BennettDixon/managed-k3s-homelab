@@ -4,6 +4,17 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "personal_site_recaptcha_secret_key" {
+  description = "Recaptcha secret key for personal site"
+  type        = string
+  sensitive   = true
+}
+
+variable "personal_site_recaptcha_public_key" {
+  description = "Recaptcha public key for personal site"
+  type        = string
+}
+
 variable "tailscale_oauth_client_id" {
   description = "Tailscale OAuth client ID"
   type        = string

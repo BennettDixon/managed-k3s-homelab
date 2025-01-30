@@ -14,3 +14,5 @@ contact_me_gmail_username=""
 # https://myaccount.google.com/apppasswords
 contact_me_gmail_password=""
 tailscale_auth_key=""
+personal_site_recaptcha_secret_key=""
+personal_site_recaptcha_public_key=""
