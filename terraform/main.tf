@@ -52,7 +52,7 @@ module "tailscale_oauth_secret" {
 # Secret for recaptcha verification on personal site
 module "personal_site_recaptcha_secret" {
   source = "./modules/secrets_manager"
-  secret_name = "personal-site-recaptcha-secret"
+  secret_name = "recaptcha_personal_site_keys"
   description = "Recaptcha secret key for personal site"
   secret_value = jsonencode({
     secret_server_key = var.personal_site_recaptcha_secret_key
