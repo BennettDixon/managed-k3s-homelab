@@ -25,7 +25,7 @@ spec:
           
         containers:
           - name: personal-site
-            image: harbor.internal/personal-blog/astro-ssr:0.1.0
+            image: harbor.internal/personal-blog/astro-ssr:0.1.1
             imagePullPolicy: Always
             ports:
               - containerPort: 80
