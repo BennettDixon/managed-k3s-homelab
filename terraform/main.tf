@@ -90,3 +90,17 @@ module "cluster_secret_reader" {
     ]
   })
 }
+
+# S3 bucket for agent-crawler
+module "agent_crawler_s3_dev_bucket" {
+  source            = "./modules/s3"
+  bucket_name       = "agent-crawler-dixon-devs"
+  acl               = "private"
+  versioning_enabled = true
+  tags              = {
+    Environment = "dev"
+    Project     = "example"
+  }
+  enable_encryption = true
+  sse_algorithm     = "AES256"
+}
