@@ -91,7 +91,12 @@ module "cluster_secret_reader" {
   })
 }
 
-# S3 bucket for agent-crawler
+# INTERNAL RESOURCES
+# These resources are defined for my personal projects, but the terraform
+# Code lives here as it is my main homelab terraform repo.
+
+
+# AGENT CRAWLER
 module "agent_crawler_s3_dev_bucket" {
   source            = "./modules/s3"
   bucket_name       = "agent-crawler-dixon-devs"
@@ -104,3 +109,35 @@ module "agent_crawler_s3_dev_bucket" {
   enable_encryption = true
   sse_algorithm     = "AES256"
 }
+
+module "agent_crawler_s3_dev_access" {
+  source       = "./modules/iam"
+  role_name    = "agent-crawler-s3-dev-access-role"
+  service_name = "ecs-tasks.amazonaws.com"
+  policy_name  = "agent-crawler-s3-dev-access-policy"
+  policy_json  = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = ["s3:ListBucket"],
+        Resource = [module.agent_crawler_s3_dev_bucket.bucket_arn]
+      },
+      {
+        Effect   = "Allow",
+        Action   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+        Resource = ["${module.agent_crawler_s3_dev_bucket.bucket_arn}/*"]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_user" "agent_crawler_s3_dev_user" {
+  name = "agent-crawler-s3-dev-user"
+}
+
+resource "aws_iam_user_policy_attachment" "agent_crawler_s3_dev_user_access" {
+  user       = aws_iam_user.agent_crawler_s3_dev_user.name
+  policy_arn = module.agent_crawler_s3_dev_access.policy_arn
+}
+
