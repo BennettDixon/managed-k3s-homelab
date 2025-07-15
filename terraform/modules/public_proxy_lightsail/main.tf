@@ -60,6 +60,7 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
             proxy_set_header Origin http://\$host;
         }
     }
+
     # Redirect www to root
     server {
         server_name www.bennettdixon.dev;
@@ -73,7 +74,54 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
         # include /etc/letsencrypt/options-ssl-nginx.conf;
         # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-        return 301 https://bennettdixon.dev$request_uri;
+        return 301 https://bennettdixon.dev\$request_uri;
+    }
+
+    # FarmSim HTTP server (redirect to HTTPS)
+    server {
+        listen 80;
+        server_name farmsim.bennettdixon.dev;
+        return 301 https://\$server_name\$request_uri;
+    }
+
+    # FarmSim HTTPS server with SSL termination
+    server {
+        listen 443 ssl;
+        server_name farmsim.bennettdixon.dev;
+
+        # SSL certificate configuration (configure with certbot)
+        # UNCOMMENT THIS BLOCK AFTER OBTAINING SSL CERTIFICATES
+        # sudo certbot --nginx -d farmsim.bennettdixon.dev
+        #ssl_certificate /etc/letsencrypt/live/farmsim.bennettdixon.dev/fullchain.pem;
+        #ssl_certificate_key /etc/letsencrypt/live/farmsim.bennettdixon.dev/privkey.pem;
+        #include /etc/letsencrypt/options-ssl-nginx.conf;
+        #ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+        # Security headers
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+
+        location / {
+            # Proxy to FarmSim backend over HTTP (internal Tailscale network)
+            proxy_pass http://farmsim-farmsim;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_set_header Origin http://\$host;
+            
+            # WebSocket support (in case FarmSim uses WebSockets)
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            
+            # Timeouts
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
     }
     
     NGINXCONF
