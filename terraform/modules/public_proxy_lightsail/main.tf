@@ -105,7 +105,7 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
 
         location / {
             # Proxy to FarmSim backend over HTTP (internal Tailscale network)
-            proxy_pass http://farmsim-farmsim;
+            proxy_pass http://farmsim;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -125,6 +125,25 @@ resource "aws_lightsail_instance" "tailscale_proxy" {
     }
     
     NGINXCONF
+
+    # Add stream configuration for TCP proxying (game port)
+    # Check if stream block already exists to avoid duplicates
+    if ! grep -q "stream {" /etc/nginx/nginx.conf; then
+        cat <<STREAMBLOCK >>/etc/nginx/nginx.conf
+
+# Stream block for TCP/UDP proxying
+stream {
+    # FarmSim game server TCP proxy
+    server {
+        listen 10823;
+        proxy_pass farmsim:10823;
+        proxy_timeout 1s;
+        proxy_responses 1;
+    }
+}
+
+STREAMBLOCK
+    fi
 
     systemctl restart nginx
 
@@ -160,6 +179,11 @@ resource "aws_lightsail_instance_public_ports" "proxy_ports" {
   port_info {
     from_port = 443
     to_port   = 443
+    protocol  = "tcp"
+  }
+  port_info {
+    from_port = 10823
+    to_port   = 10823
     protocol  = "tcp"
   }
 }
