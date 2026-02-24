@@ -24,7 +24,7 @@ spec:
           core: harbor.internal
           notary: notary.harbor.internal
         annotations:
-          cert-manager.io/cluster-issuer: "letsencrypt"
+          cert-manager.io/cluster-issuer: "selfsigned"
     persistence:
       persistentVolumeClaim:
         # Adjust based on your storage options

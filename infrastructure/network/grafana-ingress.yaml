@@ -5,7 +5,7 @@ metadata:
   namespace: kube-prometheus-stack
   annotations:
     # If not running on k3s, replace with your ingress controller
-    cert-manager.io/cluster-issuer: "letsencrypt"
+    cert-manager.io/cluster-issuer: "selfsigned"
   labels:
     app: kube-prometheus-stack
 spec:
