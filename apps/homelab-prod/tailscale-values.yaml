@@ -18,4 +18,11 @@ spec:
       name: tailscale-oauth-client
       valuesKey: client_secret
       targetPath: oauth.clientSecret
+  values:
+    # Expose the Kubernetes API server on the tailnet so kubectl works via
+    # the context from `tailscale configure kubeconfig tailscale-operator`.
+    # Chart default is "false", which leaves nothing listening on :443 of
+    # the tailscale-operator device (connections are refused).
+    apiServerProxyConfig:
+      mode: "true"
     

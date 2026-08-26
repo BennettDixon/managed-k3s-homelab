@@ -24,7 +24,9 @@ spec:
           core: harbor.internal
           notary: notary.harbor.internal
         annotations:
-          cert-manager.io/cluster-issuer: "selfsigned"
+          # homelab-ca issues leafs signed by the homelab-root-ca root, so
+          # rotations keep validating for clients that trust the root once.
+          cert-manager.io/cluster-issuer: "homelab-ca"
     persistence:
       persistentVolumeClaim:
         # Adjust based on your storage options
