@@ -17,6 +17,14 @@ spec:
     # The name of the key in the secret where to find harbor admin password Harbor
     existingSecretAdminPasswordKey: harborAdminPassword
     expose:
+      tls:
+        # cert-manager owns the harbor-ingress TLS secret (requested via the
+        # ingress annotation below). certSource "secret" stops the chart from
+        # templating its own throwaway self-signed cert into the same secret
+        # on every helm upgrade, which cert-manager then had to overwrite.
+        certSource: secret
+        secret:
+          secretName: harbor-ingress
       ingress:
         controller: default
         enabled: true
