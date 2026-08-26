@@ -6,7 +6,9 @@
 # Installs the homelab root CA at every ca_file path referenced in
 # /etc/rancher/k3s/registries.yaml so containerd validates Harbor's TLS
 # against the stable root instead of a pinned (rotating) leaf. containerd
-# re-reads the ca_file on each pull, so no k3s restart is needed.
+# re-reads an already-referenced ca_file on each pull (no restart), but
+# adding/changing the ca_file entry in registries.yaml itself requires a
+# one-time `systemctl restart k3s`.
 
 set -eu
 

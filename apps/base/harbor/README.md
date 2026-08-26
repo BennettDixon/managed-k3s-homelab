@@ -33,8 +33,13 @@ Run (from this repo, with kubectl pointed at the cluster):
 It extracts the root CA from the cluster and installs it:
 
 - on each k3s node, at every `ca_file` path referenced by
-  `/etc/rancher/k3s/registries.yaml` (containerd re-reads the file per pull;
-  no k3s restart needed)
+  `/etc/rancher/k3s/registries.yaml`. Refreshing the *contents* of an
+  already-referenced ca_file needs no restart (containerd re-reads it per
+  pull), but adding or changing the `ca_file` entry itself requires one
+  `sudo systemctl restart k3s` to regenerate containerd's registry config.
+  (Prior to 2026-08-26 the node side-stepped leaf rotations with
+  `insecure_skip_verify: true`; that has been replaced with `ca_file`
+  verification against the root.)
 - on this machine, at `~/.docker/certs.d/harbor.internal/ca.crt`
   (restart Docker Desktop afterwards)
 
