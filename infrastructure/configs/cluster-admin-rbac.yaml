@@ -1,0 +1,16 @@
+---
+# Tailnet users granted cluster-admin when reaching the API through the
+# tailscale-operator API server proxy (auth mode passes the tailnet login
+# through as the Kubernetes user; without a binding every request is 403).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tailscale-operator-cluster-admins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: bennettdixon16@gmail.com
