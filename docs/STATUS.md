@@ -25,10 +25,10 @@ Goal: first pieces of the agent stack at the compute site.
 
 | Step | What | Status |
 |------|------|--------|
-| 1 | Second HA gateway LXC on `naspve` (+ `proxmox/tailscale-gw.md` recipe) | blocked: SSH key install on hosts |
-| 2 | NAS VM joins tailnet (+ `proxmox/nas-vm.md`) | blocked: same |
-| 3 | `worker-01` LXC + subscription-lane smoke test (+ `proxmox/worker.md`, `workers/smoke/`) | blocked: same |
-| 4 | n8n LXC, tailnet-bound (+ `mini/mcp-config.md` entry) | blocked: same |
+| 1 | Second HA gateway LXC on `naspve` (+ `proxmox/tailscale-gw.md` recipe) | **done** — `tailscale-gw2` (CT 101), routes + exit approved, key expiry off; also fixed non-persistent forwarding sysctls on gw-01 |
+| 2 | NAS VM joins tailnet (+ `proxmox/nas-vm.md`) | in progress |
+| 3 | `worker-01` LXC + subscription-lane smoke test (+ `proxmox/worker.md`, `workers/smoke/`) | pending |
+| 4 | n8n LXC, tailnet-bound (+ `mini/mcp-config.md` entry) | pending |
 | 5 | Wrap-up: this file, verification checklist | pending |
 
 ## Manual follow-ups needed (operator)
