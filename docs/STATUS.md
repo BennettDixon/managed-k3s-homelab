@@ -27,7 +27,7 @@ Goal: first pieces of the agent stack at the compute site.
 |------|------|--------|
 | 1 | Second HA gateway LXC on `naspve` (+ `proxmox/tailscale-gw.md` recipe) | **done** — `tailscale-gw2` (CT 101), routes + exit approved, key expiry off; also fixed non-persistent forwarding sysctls on gw-01 |
 | 2 | NAS VM joins tailnet (+ `proxmox/nas-vm.md`) | **done** — `truenas-bulk-52tb`, plain node, key expiry off, reachable by name; replication/NFS rule documented |
-| 3 | `worker-01` LXC + subscription-lane smoke test (+ `proxmox/worker.md`, `workers/smoke/`) | pending |
+| 3 | `worker-01` LXC + subscription-lane smoke test (+ `proxmox/worker.md`, `workers/smoke/`) | **done** — smoke passed end-to-end, artifact on `truenas-bulk-52tb` dataset `BulkPoolZ2/artifacts`; hourly cron fires today only (delete `/etc/cron.d/worker-smoke-today` after) |
 | 4 | n8n LXC, tailnet-bound (+ `mini/mcp-config.md` entry) | pending |
 | 5 | Wrap-up: this file, verification checklist | pending |
 
