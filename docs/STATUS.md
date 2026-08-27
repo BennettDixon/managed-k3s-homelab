@@ -12,39 +12,52 @@ _Last updated: 2026-08-27_
   kube-prometheus-stack, personal-site, tailscale-operator (kubectl over tailnet).
 - **Tailnet** is the only network; nothing is publicly exposed except the
   Lightsail proxy path for the personal site.
-- **Gateways:** `tailscale-gw` (compute site) advertises the server subnet and
-  offers exit node. A second HA gateway on the storage host is in progress
-  (this session).
+- **Gateways (HA pair, compute site):** `tailscale-gw` and `tailscale-gw2`, each
+  advertising the server subnet + exit node; Tailscale fails over between them.
+  Recipe: `proxmox/tailscale-gw.md`.
+- **Bulk NAS:** `truenas-bulk-52tb` (TrueNAS Core VM) — first-class tailnet node.
+  Replication targets / NFS exports / artifact uploads address it by this name,
+  never by LAN IP. Artifacts dataset: `BulkPoolZ2/artifacts`. See
+  `proxmox/nas-vm.md`.
+- **Worker:** `worker-01` (LXC, compute site) — Node LTS + Claude Code,
+  subscription-lane auth via on-host token file. Smoke test proven end-to-end
+  (headless `claude -p` → JSON artifact + log land on the NAS by tailnet name).
+  See `proxmox/worker.md`, `workers/smoke/`.
+- **n8n:** `n8n` (LXC, compute site) — native npm under systemd, listening on its
+  tailnet address only: `http://n8n:5678`. See `proxmox/n8n.md`,
+  `mini/mcp-config.md`.
 - **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS).
-- **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM, storage
-  pools, Tailscale ACLs.
+- **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM internals,
+  storage pools, Tailscale ACLs.
 
-## In flight — agent-stack kickoff session (2026-08-27)
+## Session log — agent-stack kickoff (2026-08-27)
 
-Goal: first pieces of the agent stack at the compute site.
+All five steps completed:
 
-| Step | What | Status |
-|------|------|--------|
-| 1 | Second HA gateway LXC on `naspve` (+ `proxmox/tailscale-gw.md` recipe) | **done** — `tailscale-gw2` (CT 101), routes + exit approved, key expiry off; also fixed non-persistent forwarding sysctls on gw-01 |
-| 2 | NAS VM joins tailnet (+ `proxmox/nas-vm.md`) | **done** — `truenas-bulk-52tb`, plain node, key expiry off, reachable by name; replication/NFS rule documented |
-| 3 | `worker-01` LXC + subscription-lane smoke test (+ `proxmox/worker.md`, `workers/smoke/`) | **done** — smoke passed end-to-end, artifact on `truenas-bulk-52tb` dataset `BulkPoolZ2/artifacts`; hourly cron fires today only (delete `/etc/cron.d/worker-smoke-today` after) |
-| 4 | n8n LXC, tailnet-bound (+ `mini/mcp-config.md` entry) | **done** — `n8n` 2.36.7 native npm + systemd, listening on tailnet address only, UI 200 at `http://n8n:5678`; operator first-run + API key pending |
-| 5 | Wrap-up: this file, verification checklist | pending |
+| Step | Result |
+|------|--------|
+| 1 | `tailscale-gw2` built on the storage host; both gateways verified advertising identical routes; fixed gw-01's non-persistent forwarding sysctls (would not have survived a reboot) |
+| 2 | NAS VM joined tailnet as `truenas-bulk-52tb` (plain node, key expiry off); TrueNAS-specific install documented |
+| 3 | `worker-01` built; smoke test passed end-to-end; artifact on `BulkPoolZ2/artifacts/worker-smoke/` |
+| 4 | `n8n` built, tailnet-bound only, UI serving |
+| 5 | this file, commits per step, verification checklist delivered |
 
-## Manual follow-ups needed (operator)
+## Manual follow-ups (operator)
 
-- Install the workbench automation SSH public key for `root@dellpve` and
-  `root@naspve` (key: `~/.ssh/id_ed25519_homelab_ops.pub` on the workbench).
-  Everything in this session is blocked on it.
-- Later in session, when prompted: Tailscale auth URLs for new nodes, route/exit-node
-  approval + key-expiry disable in the admin console, `claude setup-token` on
-  `worker-01`, n8n first-run setup + API key.
+- **n8n first run:** open `http://n8n:5678`, create the owner account, then
+  Settings → n8n API → create an API key and export it as `N8N_API_KEY` on the
+  workbench (`mini/mcp-config.md`).
+- **Delete the smoke-test cron** after 2026-08-27: `/etc/cron.d/worker-smoke-today`
+  on `worker-01` (day/month-restricted; would recur yearly if left).
+- **After any TrueNAS upgrade:** re-run the tailscale package install on
+  `truenas-bulk-52tb` (`proxmox/nas-vm.md`); the rc tunable survives.
 
 ## Next session starts with
 
-- First n8n routine (deterministic executor bridge) and the jobs MCP spec
-  (`enqueue`/`status`/`artifacts` envelope) — see build order in the agent
-  harness notes.
+- First n8n routine (deterministic executor) driven from the workbench via
+  n8n-mcp, and the **jobs MCP spec** (`enqueue`/`status`/`artifacts` envelope,
+  budget_cap mandatory) — design-first, before manifests.
+- Groundwork after that: k8s storage classes + site labels (build order item 1).
 
 ## Decisions log
 
@@ -52,3 +65,9 @@ Goal: first pieces of the agent stack at the compute site.
   kickoff prompts stay local (gitignored) rather than committed — they contain
   context that the repo's own rules keep out of published docs. Flip by removing
   the .gitignore entries if the repo ever goes private.
+- 2026-08-27: worker artifacts get a dedicated dataset (`BulkPoolZ2/artifacts`)
+  rather than a directory in the existing share — own snapshot/quota policy later.
+- 2026-08-27: n8n runs native npm, not docker-in-LXC — one less runtime layer in
+  an unprivileged CT.
+- 2026-08-27: smoke artifacts travel by scp, not NFS mount — needs nothing but
+  SSH already enabled on the NAS; revisit at real artifact volume.
