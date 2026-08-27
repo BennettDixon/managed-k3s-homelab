@@ -54,10 +54,13 @@ All five steps completed:
 
 ## Next session starts with
 
-- First n8n routine (deterministic executor) driven from the workbench via
-  n8n-mcp, and the **jobs MCP spec** (`enqueue`/`status`/`artifacts` envelope,
-  budget_cap mandatory) — design-first, before manifests.
+- ~~First n8n routine~~ **done 2026-08-27 (same day):** `smoke-heartbeat`
+  created/activated/executed entirely via the n8n REST API; canonical export
+  in `n8n/smoke-heartbeat.json`.
+- The **jobs MCP spec** (`enqueue`/`status`/`artifacts` envelope, budget_cap
+  mandatory) — design-first, before manifests.
 - Groundwork after that: k8s storage classes + site labels (build order item 1).
+- Optional workbench wiring: n8n-mcp on the mini per `mini/mcp-config.md`.
 
 ## Decisions log
 
