@@ -34,3 +34,9 @@ terraform/terraform.tfvars
 
 # notes folder
 notes/
+
+# local operator/agent files — contain site context that must not be published (repo is public)
+CLAUDE.md
+.l6e/
+.claude/*
+!.claude/settings.json
