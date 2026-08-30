@@ -74,3 +74,6 @@ All five steps completed:
   an unprivileged CT.
 - 2026-08-27: smoke artifacts travel by scp, not NFS mount — needs nothing but
   SSH already enabled on the NAS; revisit at real artifact volume.
+- 2026-08-30: tailnet ts.net FQDNs are never committed to this public repo —
+  where a manifest needs one (jobs-mcp n8n egress), it ships as a gitignored
+  overlay patch.
