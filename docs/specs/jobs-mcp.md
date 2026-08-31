@@ -1,6 +1,6 @@
 # jobs-mcp — v1 specification
 
-**Status: PROPOSED — awaiting operator review (2026-08-27). No implementation until approved.**
+**Status: APPROVED 2026-08-31 — all four sign-off decisions (storage, delivery semantics, auth, v1 scope) accepted as specified. Implementation may begin at slice 1 (§12).**
 
 **README paragraph (repo convention):** `jobs-mcp` is the task-queue MCP service of the personal cloud. It accepts job envelopes over MCP (`enqueue`, `status`, `artifacts`, plus `cancel`), persists them in SQLite on a local PVC, and dispatches them to deterministic executors — n8n workflows reached over the tailnet. Depends on: tailscale-operator (exposure + n8n egress), external-secrets (bearer token, n8n API key, webhook secret), Harbor (image). Job records live on its PVC; artifact payloads live on the bulk NAS at `truenas-bulk-52tb:/mnt/BulkPoolZ2/artifacts/jobs/`. Agentic executors and the model gateway plug in later behind the same interface.
 

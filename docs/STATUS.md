@@ -88,8 +88,9 @@ n8n MCP (connected), kubeconfig, and its own SSH key trusted by `dellpve`,
 - ~~First n8n routine~~ **done 2026-08-27 (same day):** `smoke-heartbeat`
   created/activated/executed entirely via the n8n REST API; canonical export
   in `n8n/smoke-heartbeat.json`.
-- The **jobs MCP spec** (`enqueue`/`status`/`artifacts` envelope, budget_cap
-  mandatory) — design-first, before manifests.
+- ~~The jobs MCP spec~~ **APPROVED 2026-08-31** (`docs/specs/jobs-mcp.md`) —
+  next: slice 1, `services/jobs-mcp/` (server, dispatcher, SQLite, tests; no
+  manifests). Operator prerequisites in spec §12 are needed before slice 2.
 - Groundwork after that: k8s storage classes + site labels (build order item 1).
 - Optional workbench wiring: n8n-mcp on the mini per `mini/mcp-config.md`.
 
