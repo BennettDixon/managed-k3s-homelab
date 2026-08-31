@@ -47,8 +47,8 @@ All five steps completed:
 - **n8n first run:** open `http://n8n:5678`, create the owner account, then
   Settings → n8n API → create an API key and export it as `N8N_API_KEY` on the
   workbench (`mini/mcp-config.md`).
-- **Delete the smoke-test cron** after 2026-08-27: `/etc/cron.d/worker-smoke-today`
-  on `worker-01` (day/month-restricted; would recur yearly if left).
+- ~~Delete the smoke-test cron~~ done 2026-08-31 (7 hourly artifacts landed
+  on the NAS while it ran — the lane works unattended).
 - **After any TrueNAS upgrade:** re-run the tailscale package install on
   `truenas-bulk-52tb` (`proxmox/nas-vm.md`); the rc tunable survives.
 
