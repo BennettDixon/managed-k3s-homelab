@@ -64,15 +64,18 @@ needs it copied in by hand or the runtime works without the ground rules.
 
 ## Remaining operator steps (interactive, one-time)
 
-1. Click **Install** on the Xcode CLT dialog (JetKVM) → then
-   `git clone https://github.com/BennettDixon/managed-k3s-homelab.git ~/projects/managed-k3s-homelab`
-   (public repo, https, read-only; add a push credential only when the
-   workbench needs to commit).
-2. `claude` login for the subscription lane (interactive OAuth) — once per
-   account that runs Claude (`bennett` done; `agent` pending:
-   `ssh -t agent@agent-mini` then run `claude` and follow the login flow).
-3. Admin console: delete the stale `admins-mac-mini` node entry; decide
+Done 2026-08-31: Xcode CLT installed; `claude` logged in on both accounts;
+`agent` verified end-to-end (headless `claude -p` returns clean JSON);
+`agent` has the repo clone. Still open:
+
+1. Admin console: delete the stale `admins-mac-mini` node entry; decide
    whether `agent-mini` should keep offering exit node; disable key expiry
    on `agent-mini` and `jetkvm-hot-edge`.
-4. Later, when the workbench builds images: Docker + the Harbor root CA
+2. `bennett`'s own repo clone whenever needed (public https; remember the
+   CLAUDE.md hand-copy; add a push credential only when the workbench
+   needs to commit).
+3. Later, when the workbench builds images: Docker + the Harbor root CA
    trust (both need admin; see the harbor CA runbook/memory).
+
+macOS quirk for scripts: there is no `timeout` command in the base system —
+worker recipes written for Debian need that flag dropped or replaced here.
