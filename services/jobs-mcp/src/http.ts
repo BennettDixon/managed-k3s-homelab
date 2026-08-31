@@ -16,7 +16,14 @@ function bearerOk(header: string | undefined, token: string): boolean {
   return presented.length === expected.length && timingSafeEqual(presented, expected);
 }
 
-export function buildApp(db: Database.Database, queue: Queue, registry: Registry, config: Config, metrics: Metrics) {
+export interface AppOpts {
+  registryError?: string | null;
+  log?: (line: Record<string, unknown>) => void;
+}
+
+export function buildApp(db: Database.Database, queue: Queue, registry: Registry, config: Config, metrics: Metrics, opts: AppOpts = {}) {
+  const registryError = opts.registryError ?? null;
+  const log = opts.log ?? (() => {});
   const app = express();
   app.use(express.json({ limit: "256kb" }));
 
@@ -36,6 +43,7 @@ export function buildApp(db: Database.Database, queue: Queue, registry: Registry
   app.get("/readyz", (_req, res) => {
     try {
       writePing(db);
+      if (registryError !== null) throw new Error(`registry parse failed: ${registryError}`);
       if (registry.size === 0) throw new Error("registry empty");
       if (!config.bearerToken) throw new Error("token missing");
       res.status(200).json({ ok: true });
@@ -56,7 +64,7 @@ export function buildApp(db: Database.Database, queue: Queue, registry: Registry
       res.status(401).json({ code: "E_UNAUTHORIZED", message: "missing or invalid bearer token", retryable: false });
       return;
     }
-    const server = buildMcpServer(queue, registry, config, metrics);
+    const server = buildMcpServer(queue, registry, config, metrics, log);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       void transport.close();

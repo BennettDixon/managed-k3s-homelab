@@ -75,6 +75,30 @@ describe("envelope validation (spec §3)", () => {
     expect(codeOf(validEnvelope({ idempotency_key: "x".repeat(129) }))).toBe("E_SCHEMA");
   });
 
+  it("payload_schema from the registry is enforced (E_PAYLOAD_INVALID)", () => {
+    const strict = testRegistry(`  schema-task:
+    executor: n8n
+    webhook_path: jobs/schema-task
+    timeout_s: 60
+    max_attempts: 1
+    idempotent: true
+    payload_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string }
+      required: [name]
+`);
+    const v = (raw: unknown) => validateEnvelope(raw, strict, 25);
+    expect(v(validEnvelope({ task_type: "schema-task", payload: { name: "x" } })).task_type).toBe("schema-task");
+    expect(() => v(validEnvelope({ task_type: "schema-task", payload: { junk: 1 } }))).toThrowError(
+      expect.objectContaining({ code: "E_PAYLOAD_INVALID" }),
+    );
+    expect(() => v(validEnvelope({ task_type: "schema-task", payload: {} }))).toThrowError(
+      expect.objectContaining({ code: "E_PAYLOAD_INVALID" }),
+    );
+  });
+
   it("envelope hash is stable under payload key order", () => {
     const a = validate(validEnvelope({ payload: { x: 1, y: { b: 2, a: 3 } } }));
     const b = validate(validEnvelope({ payload: { y: { a: 3, b: 2 }, x: 1 } }));

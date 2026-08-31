@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Queue, JobRow } from "./queue.js";
 import type { Registry } from "./registry.js";
 import type { Config } from "./config.js";
@@ -6,13 +7,18 @@ import type { Metrics } from "./metrics.js";
 // n8n deterministic-executor bridge (spec §6): one synchronous POST to
 // /webhook/jobs/<task_type>, answered by a Respond-to-Webhook final node.
 // No callbacks, no execution polling, no stop endpoint (n8n has none).
-interface CompletionReport {
-  ok: boolean;
-  result?: unknown;
-  artifacts?: { name: string; bytes?: number; sha256?: string }[];
-  spent_usd?: number;
-  error?: { code?: string; message?: string };
-}
+//
+// The completion report is UNTRUSTED input: a misconfigured Respond node can
+// return null, a string, or garbage shapes. It is schema-validated before a
+// single property is read — reviewer-verified that a blind cast here crashes
+// the process via unhandled rejection, and repeats after every boot sweep.
+const CompletionReportSchema = z.object({
+  ok: z.boolean(),
+  result: z.unknown().optional(),
+  artifacts: z.array(z.object({ name: z.string() }).passthrough()).optional(),
+  spent_usd: z.number().optional(),
+  error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional(),
+});
 
 const MAX_RESULT_BYTES = 64 * 1024;
 
@@ -21,8 +27,19 @@ export interface DispatcherOpts {
   log?: (line: Record<string, unknown>) => void;
 }
 
+// undici severs a fetch whose response headers haven't arrived with a
+// TypeError whose cause is a headers-timeout — NOT an AbortSignal
+// TimeoutError. The n8n bridge only sends headers when the workflow
+// completes, so this shape means "executor too slow", never "bridge down".
+function isTimeoutError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "TimeoutError" || err.name === "AbortError") return true;
+  const cause = (err as { cause?: { code?: string; name?: string } }).cause;
+  return cause?.code === "UND_ERR_HEADERS_TIMEOUT" || cause?.name === "HeadersTimeoutError";
+}
+
 export class Dispatcher {
-  private inFlight = 0;
+  private inFlight = new Set<Promise<void>>();
   private stopping = false;
   private bridgeFailures = 0;
   private bridgeBackoffUntil = 0;
@@ -47,27 +64,53 @@ export class Dispatcher {
     this.timer.unref();
   }
 
-  // SIGTERM (spec §5): stop claiming; in-flight awaits either finish within the
-  // grace period or are severed and recovered by the next boot sweep.
-  stop(): void {
+  // SIGTERM drain (spec §5): stop claiming, then actually WAIT for in-flight
+  // webhook awaits up to the grace period — a deploy must not consume an
+  // attempt on a job whose execution would have completed in milliseconds.
+  async drain(graceMs = 25_000): Promise<void> {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
+    const pending = Promise.allSettled([...this.inFlight]);
+    await Promise.race([pending, new Promise((r) => setTimeout(r, graceMs))]);
   }
 
   get bridgeUp(): boolean {
     return this.bridgeFailures === 0;
   }
 
+  get inFlightCount(): number {
+    return this.inFlight.size;
+  }
+
+  // Exception barrier: tick runs inside a bare timer callback, so a throwing
+  // DB write (e.g. SQLITE_FULL) must degrade to a logged error, never an
+  // uncaughtException crash-loop (spec §10: "PVC full ⇒ ... no crash-loop").
   tick(): void {
-    if (this.stopping) return;
-    if (this.now() < this.bridgeBackoffUntil) return;
-    while (this.inFlight < this.config.dispatchConcurrency) {
-      const job = this.queue.claimNext();
-      if (!job) break;
-      this.inFlight++;
-      void this.dispatch(job).finally(() => {
-        this.inFlight--;
-      });
+    try {
+      if (this.stopping) return;
+      if (this.now() < this.bridgeBackoffUntil) return;
+      while (this.inFlight.size < this.config.dispatchConcurrency) {
+        const job = this.queue.claimNext();
+        if (!job) break;
+        this.metrics.transitions.labels("queued", "running").inc();
+        this.log({ evt: "transition", job_id: job.id, task_type: job.task_type, from: "queued", to: "running", attempt: job.attempts });
+        const p = this.dispatch(job)
+          .catch((err) => {
+            // dispatch() has its own barriers; this is the last resort.
+            this.log({ evt: "dispatch_unhandled", job_id: job.id, error: String(err) });
+            try {
+              this.queue.failAttempt(job.id, { code: "internal_dispatch_error", message: String(err), retryable: true });
+            } catch {
+              /* full-disk worst case: leave the row running for the boot sweep */
+            }
+          })
+          .finally(() => {
+            this.inFlight.delete(p);
+          });
+        this.inFlight.add(p);
+      }
+    } catch (err) {
+      this.log({ evt: "tick_error", error: String(err) });
     }
   }
 
@@ -80,6 +123,7 @@ export class Dispatcher {
     if (!entry) {
       // Registry changed under a queued job (hash-rolled deploy): terminal.
       this.queue.failTerminal(job.id, { code: "task_type_removed", message: `task_type ${job.task_type} no longer in registry`, retryable: false });
+      this.logTransition(job, "failed", 0, "task_type_removed");
       return;
     }
     const started = this.now();
@@ -105,10 +149,10 @@ export class Dispatcher {
         signal: AbortSignal.timeout(entry.timeout_s * 1000),
       });
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === "TimeoutError") {
+      if (isTimeoutError(err)) {
         // Timeout = abandon locally, attempt failed (spec §5); the execution
         // may still finish in n8n — harmless by the idempotency contract.
-        this.transition(job, "attempt-failed", { code: "timeout", message: `no response within ${entry.timeout_s}s`, retryable: true });
+        this.failAttempt(job, started, { code: "timeout", message: `no response within ${entry.timeout_s}s`, retryable: true });
       } else {
         // Connection-level failure: the bridge is down. Nothing is failed
         // because of bridge downtime (spec §5) — revert the claim, back off.
@@ -126,22 +170,28 @@ export class Dispatcher {
     this.metrics.bridgeUp.set(1);
 
     if (!res.ok) {
-      this.transition(job, "attempt-failed", { code: "executor_http_error", message: `webhook returned ${res.status}`, retryable: true });
+      this.failAttempt(job, started, { code: "executor_http_error", message: `webhook returned ${res.status}`, retryable: true });
       return;
     }
 
-    let report: CompletionReport;
+    let rawBody: unknown;
     try {
-      report = (await res.json()) as CompletionReport;
+      rawBody = await res.json();
     } catch {
-      this.transition(job, "attempt-failed", { code: "executor_bad_response", message: "webhook response was not JSON", retryable: true });
+      this.failAttempt(job, started, { code: "executor_bad_response", message: "webhook response was not JSON", retryable: true });
       return;
     }
+    const parsed = CompletionReportSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      this.failAttempt(job, started, { code: "executor_bad_response", message: "completion report does not match the bridge contract", retryable: true });
+      return;
+    }
+    const report = parsed.data;
 
     this.metrics.dispatchDuration.labels(job.task_type).observe((this.now() - started) / 1000);
 
-    if (report.ok !== true) {
-      this.transition(job, "attempt-failed", {
+    if (!report.ok) {
+      this.failAttempt(job, started, {
         code: report.error?.code ?? "executor_reported_failure",
         message: report.error?.message ?? "executor reported ok: false",
         retryable: true,
@@ -151,7 +201,7 @@ export class Dispatcher {
 
     const resultJson = report.result === undefined ? null : JSON.stringify(report.result);
     if (resultJson !== null && Buffer.byteLength(resultJson, "utf8") > MAX_RESULT_BYTES) {
-      this.transition(job, "attempt-failed", { code: "result_too_large", message: "result exceeds 64 KiB; anything bigger is an artifact", retryable: false });
+      this.failAttempt(job, started, { code: "result_too_large", message: "result exceeds 64 KiB; anything bigger is an artifact", retryable: false });
       return;
     }
 
@@ -170,23 +220,32 @@ export class Dispatcher {
         { code: "artifacts_missing", message: `declared but not reported: ${missing.join(", ")}`, retryable: false },
         JSON.stringify(manifest),
       );
-      this.logTransition(job, "failed");
+      this.logTransition(job, "failed", this.now() - started, "artifacts_missing");
       return;
     }
 
     this.queue.succeed(job.id, resultJson, report.spent_usd ?? null, JSON.stringify(manifest));
-    this.logTransition(job, "succeeded");
+    this.logTransition(job, "succeeded", this.now() - started);
   }
 
-  private transition(job: JobRow, kind: "attempt-failed", error: { code: string; message: string; retryable: boolean }): void {
+  private failAttempt(job: JobRow, started: number, error: { code: string; message: string; retryable: boolean }): void {
     this.queue.failAttempt(job.id, error);
     const after = this.queue.get(job.id);
-    this.logTransition(job, after?.state ?? "unknown", error.code);
+    this.logTransition(job, after?.state ?? "unknown", this.now() - started, error.code);
   }
 
-  private logTransition(job: JobRow, to: string, errorCode?: string): void {
+  private logTransition(job: JobRow, to: string, latencyMs: number, errorCode?: string): void {
     this.metrics.transitions.labels("running", to).inc();
     // One structured line per transition; never payload contents (spec §9).
-    this.log({ evt: "transition", job_id: job.id, task_type: job.task_type, from: "running", to, attempt: job.attempts, ...(errorCode ? { error: errorCode } : {}) });
+    this.log({
+      evt: "transition",
+      job_id: job.id,
+      task_type: job.task_type,
+      from: "running",
+      to,
+      attempt: job.attempts,
+      latency_ms: latencyMs,
+      ...(errorCode ? { error: errorCode } : {}),
+    });
   }
 }

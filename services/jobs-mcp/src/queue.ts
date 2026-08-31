@@ -200,9 +200,10 @@ export class Queue {
     return tx();
   }
 
-  stateCounts(): Record<string, number> {
-    const rows = this.db.prepare("SELECT state, COUNT(*) AS n FROM jobs GROUP BY state").all() as { state: string; n: number }[];
-    return Object.fromEntries(rows.map((r) => [r.state, r.n]));
+  stateCounts(): { state: string; task_type: string; n: number }[] {
+    return this.db
+      .prepare("SELECT state, task_type, COUNT(*) AS n FROM jobs GROUP BY state, task_type")
+      .all() as { state: string; task_type: string; n: number }[];
   }
 
   oldestQueuedAgeMs(): number {

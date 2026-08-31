@@ -36,7 +36,8 @@ export function validateEnvelope(raw: unknown, registry: Registry, maxBudgetCapU
   if (typeof taskType !== "string" || !TASK_TYPE_RE.test(taskType)) {
     throw new JobsError("E_SCHEMA", "task_type is required and must match ^[a-z0-9][a-z0-9-]{1,62}$");
   }
-  if (!registry.has(taskType)) {
+  const entry = registry.get(taskType);
+  if (!entry) {
     throw new JobsError("E_TASK_TYPE_UNKNOWN", `task_type not in registry: ${taskType}`);
   }
 
@@ -46,6 +47,12 @@ export function validateEnvelope(raw: unknown, registry: Registry, maxBudgetCapU
   }
   if (Buffer.byteLength(JSON.stringify(payload), "utf8") > MAX_JSON_BYTES) {
     throw new JobsError("E_PAYLOAD_INVALID", "payload exceeds 64 KiB");
+  }
+  // Registry payload_schema enforcement (spec §3/§4): this is the security
+  // fence for task types whose workflows execute payload-derived commands.
+  if (entry.validatePayload && !entry.validatePayload(payload)) {
+    const detail = entry.validatePayload.errors?.[0];
+    throw new JobsError("E_PAYLOAD_INVALID", `payload rejected by task_type schema${detail ? `: ${detail.instancePath || "/"} ${detail.message}` : ""}`);
   }
 
   // budget_cap: required, scalar USD, no default, ever (spec §3).

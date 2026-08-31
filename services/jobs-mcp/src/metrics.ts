@@ -24,12 +24,12 @@ export class Metrics {
     });
     new Gauge({
       name: "jobs_state_count",
-      help: "jobs per state",
-      labelNames: ["state"],
+      help: "jobs per state and task_type (spec §9)",
+      labelNames: ["state", "task_type"],
       registers: [this.registry],
       collect() {
-        const counts = queue.stateCounts();
-        for (const s of ["queued", "running", "succeeded", "failed", "canceled"]) this.labels(s).set(counts[s] ?? 0);
+        this.reset();
+        for (const row of queue.stateCounts()) this.labels(row.state, row.task_type).set(row.n);
       },
     });
     new Gauge({

@@ -43,6 +43,36 @@ task_types:
     ).toThrowError();
   });
 
+  it("rejects timeout_s above 300 (undici severs headers at 300s regardless)", () => {
+    expect(() =>
+      parseRegistry(`
+task_types:
+  slow-task:
+    executor: n8n
+    webhook_path: jobs/slow-task
+    timeout_s: 301
+    max_attempts: 1
+    idempotent: true
+`),
+    ).toThrowError();
+  });
+
+  it("compiles payload_schema at parse time and rejects a broken schema", () => {
+    expect(() =>
+      parseRegistry(`
+task_types:
+  bad-schema:
+    executor: n8n
+    webhook_path: jobs/bad-schema
+    timeout_s: 60
+    max_attempts: 1
+    idempotent: true
+    payload_schema:
+      type: not-a-real-type
+`),
+    ).toThrowError();
+  });
+
   it("rejects invalid task_type names", () => {
     expect(() =>
       parseRegistry(`

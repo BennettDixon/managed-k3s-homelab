@@ -154,6 +154,60 @@ describe("dispatcher / n8n bridge (spec §5–§7)", () => {
     expect(JSON.parse(row.error!).code).toBe("result_too_large");
   });
 
+  it("a null completion body is an attempt failure, never a crash (reviewer-verified crash bug)", async () => {
+    const d = makeDispatcher(fakeFetch(() => jsonResponse(null)));
+    const { id } = queue.enqueue(env());
+    await expect(d.dispatch(queue.claimNext()!)).resolves.toBeUndefined();
+    expect(JSON.parse(queue.get(id)!.error!).code).toBe("executor_bad_response");
+  });
+
+  it("a non-array artifacts field is an attempt failure, never a crash", async () => {
+    const d = makeDispatcher(fakeFetch(() => jsonResponse({ ok: true, artifacts: "nope" })));
+    const { id } = queue.enqueue(env());
+    await expect(d.dispatch(queue.claimNext()!)).resolves.toBeUndefined();
+    expect(JSON.parse(queue.get(id)!.error!).code).toBe("executor_bad_response");
+  });
+
+  it("undici headers-timeout (TypeError + UND_ERR_HEADERS_TIMEOUT cause) is a TIMEOUT, not bridge-down", async () => {
+    const d = makeDispatcher(
+      fakeFetch(() => {
+        const err = new TypeError("fetch failed");
+        (err as Error & { cause?: unknown }).cause = { code: "UND_ERR_HEADERS_TIMEOUT", name: "HeadersTimeoutError" };
+        throw err;
+      }),
+    );
+    const { id } = queue.enqueue(env());
+    await d.dispatch(queue.claimNext()!);
+    const row = queue.get(id)!;
+    expect(row.attempts).toBe(1); // attempt consumed — no infinite re-trigger loop
+    expect(JSON.parse(row.error!).code).toBe("timeout");
+    expect(d.bridgeUp).toBe(true);
+  });
+
+  it("drain waits for in-flight dispatches instead of severing them", async () => {
+    let release!: (r: Response) => void;
+    const gate = new Promise<Response>((r) => (release = r));
+    const d = makeDispatcher(fakeFetch(() => gate));
+    const { id } = queue.enqueue(env());
+    const inFlight = d.dispatch(queue.claimNext()!);
+    const drained = d.drain(5_000);
+    release(jsonResponse({ ok: true, result: { late: 1 } }));
+    await inFlight;
+    await drained;
+    expect(queue.get(id)!.state).toBe("succeeded");
+  });
+
+  it("tick survives a throwing claim (full-disk shape) without escaping the timer callback", () => {
+    const d = makeDispatcher(fakeFetch(() => jsonResponse({ ok: true })));
+    const broken = Object.create(queue) as typeof queue;
+    broken.claimNext = () => {
+      throw new Error("SQLITE_FULL: database or disk is full");
+    };
+    // @ts-expect-error reaching into the private field to simulate the failure
+    d.queue = broken;
+    expect(() => d.tick()).not.toThrow();
+  });
+
   it("task_type removed from registry under a queued job fails terminally", async () => {
     const shrunk = testRegistry();
     shrunk.delete("smoke-heartbeat");
