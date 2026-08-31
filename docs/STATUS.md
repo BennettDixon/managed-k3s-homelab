@@ -60,6 +60,18 @@ n8n MCP (connected), kubeconfig, and its own SSH key trusted by `dellpve`,
 `naspve`, `truenas-bulk-52tb`. Remaining interactive steps in
 `mini/setup.md`.
 
+## Parked (deliberate, not forgotten)
+
+- **Edge-site Proxmox box (N150, 16GB DDR5, 500GB NVMe) — rack integration
+  unfinished.** Its committed role: the edge gateway LXC pair member
+  (`proxmox/tailscale-gw.md` is already parameterized for this build) —
+  though note the workbench currently covers edge exit-node duty. Beyond
+  that it's expected to be underused; candidate roles to weigh later:
+  cross-site watchdog (edge node probing compute-site services and
+  alerting, and vice versa), second DNS/Pi-hole for edge resilience,
+  or a small edge worker for latency-sensitive jobs once jobs-mcp exists.
+  No commitment yet — revisit after jobs-mcp v1.
+
 ## Next session starts with
 
 - ~~First n8n routine~~ **done 2026-08-27 (same day):** `smoke-heartbeat`
