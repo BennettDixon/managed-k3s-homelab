@@ -68,14 +68,16 @@ Done 2026-08-31: Xcode CLT installed; `claude` logged in on both accounts;
 `agent` verified end-to-end (headless `claude -p` returns clean JSON);
 `agent` has the repo clone. Still open:
 
-1. Admin console: delete the stale `admins-mac-mini` node entry; decide
-   whether `agent-mini` should keep offering exit node; disable key expiry
-   on `agent-mini` and `jetkvm-hot-edge`.
-2. `bennett`'s own repo clone whenever needed (public https; remember the
+1. `bennett`'s own repo clone whenever needed (public https; remember the
    CLAUDE.md hand-copy; add a push credential only when the workbench
    needs to commit).
-3. Later, when the workbench builds images: Docker + the Harbor root CA
+2. Later, when the workbench builds images: Docker + the Harbor root CA
    trust (both need admin; see the harbor CA runbook/memory).
+
+Admin-console state (verified 2026-08-31): key expiry disabled on
+`agent-mini` and `jetkvm-hot-edge`; stale `admins-mac-mini` node deleted;
+`agent-mini` intentionally offers exit node. (The JetKVM's tailnet name is
+DNS-level — its OS hostname is the factory `jetkvm-<id>`.)
 
 macOS quirk for scripts: there is no `timeout` command in the base system —
 worker recipes written for Debian need that flag dropped or replaced here.
