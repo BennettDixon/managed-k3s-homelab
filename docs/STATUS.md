@@ -71,6 +71,17 @@ n8n MCP (connected), kubeconfig, and its own SSH key trusted by `dellpve`,
   alerting, and vice versa), second DNS/Pi-hole for edge resilience,
   or a small edge worker for latency-sensitive jobs once jobs-mcp exists.
   No commitment yet — revisit after jobs-mcp v1.
+- **knowledge-mcp vector store — candidates to weigh at spec time:**
+  (a) Postgres + pgvector in an LXC on the edge N150, data on its local
+  NVMe (one SQL surface for vectors+metadata, multi-client, backups to the
+  bulk NAS; costs a real server on residential power — and it would give
+  the N150 its primary role); (b) LanceDB on NVMe-tier files (zero server
+  ops); (c) sqlite-vec (one storage engine across the stack). Shared
+  constraint either way: batch embedding/ingest runs on compute-site
+  workers; the edge only serves queries. Queue store is NOT in scope here —
+  jobs-mcp stays SQLite-local per its spec.
+- **Redis at compute site** — deploy only when its first real consumer
+  lands (likely the model gateway: counters, cache, pub/sub); not before.
 
 ## Next session starts with
 
