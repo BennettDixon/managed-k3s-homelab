@@ -52,6 +52,14 @@ All five steps completed:
 - **After any TrueNAS upgrade:** re-run the tailscale package install on
   `truenas-bulk-52tb` (`proxmox/nas-vm.md`); the rc tunable survives.
 
+## Workbench (2026-08-31)
+
+`agent-mini` is live on the rack with JetKVM out-of-band console
+(`jetkvm-hot-edge`). Bootstrapped no-sudo: Claude Code, node LTS, kubectl,
+n8n MCP (connected), kubeconfig, and its own SSH key trusted by `dellpve`,
+`naspve`, `truenas-bulk-52tb`. Remaining interactive steps in
+`mini/setup.md`.
+
 ## Next session starts with
 
 - ~~First n8n routine~~ **done 2026-08-27 (same day):** `smoke-heartbeat`
