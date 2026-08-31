@@ -45,13 +45,32 @@ The `${N8N_API_KEY}` reference expands from the environment at MCP startup
 (verified: `claude mcp list` shows Connected). Config lands in
 `~/.claude.json`; no secret is stored in it.
 
+## Account tiering
+
+Two local accounts, deliberately scoped (NanoClaw belongs to neither — per
+the harness rules it will be a sandboxed container with jobs+knowledge MCP
+access only, most likely a cluster pod behind a NetworkPolicy, and it cannot
+exist before those MCPs do):
+
+| Tier | Account | Holds |
+|------|---------|-------|
+| Human admin | `bennett` (admin) | full-access homelab key, kubeconfig, repo push, interactive Claude |
+| Trusted headless runtime | `agent` (standard) | own Claude login, n8n MCP + `N8N_API_KEY`, runtime SSH key trusted **nowhere** until a task needs it |
+
+The `agent` account mirrors the no-sudo toolchain (`claude`, node tarball,
+PATH via `~/.zshenv`), has its own repo clone, and — important — a manually
+copied `CLAUDE.md`: the harness file is gitignored, so every fresh clone
+needs it copied in by hand or the runtime works without the ground rules.
+
 ## Remaining operator steps (interactive, one-time)
 
 1. Click **Install** on the Xcode CLT dialog (JetKVM) → then
    `git clone https://github.com/BennettDixon/managed-k3s-homelab.git ~/projects/managed-k3s-homelab`
    (public repo, https, read-only; add a push credential only when the
    workbench needs to commit).
-2. `claude` login for the subscription lane (interactive OAuth).
+2. `claude` login for the subscription lane (interactive OAuth) — once per
+   account that runs Claude (`bennett` done; `agent` pending:
+   `ssh -t agent@agent-mini` then run `claude` and follow the login flow).
 3. Admin console: delete the stale `admins-mac-mini` node entry; decide
    whether `agent-mini` should keep offering exit node; disable key expiry
    on `agent-mini` and `jetkvm-hot-edge`.
