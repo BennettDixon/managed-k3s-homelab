@@ -3,7 +3,7 @@
 Rolling status of the personal-cloud buildout. Updated at the end of every working
 session. Tailnet MagicDNS names only — no LAN IPs or site details in this file.
 
-_Last updated: 2026-08-27_
+_Last updated: 2026-09-01_
 
 ## Standing infrastructure
 
@@ -12,8 +12,10 @@ _Last updated: 2026-08-27_
   kube-prometheus-stack, personal-site, tailscale-operator (kubectl over tailnet).
 - **Tailnet** is the only network; nothing is publicly exposed except the
   Lightsail proxy path for the personal site.
-- **Gateways (HA pair, compute site):** `tailscale-gw` and `tailscale-gw2`, each
-  advertising the server subnet + exit node; Tailscale fails over between them.
+- **Gateways:** compute site HA pair `tailscale-gw` + `tailscale-gw2` (server
+  subnet + exit node, automatic failover); edge site `tailscale-gw-edge`
+  (servers-VLAN subnet + exit node — single until a second edge host exists;
+  the workbench's exit node stays advertised as a deliberate backup).
   Recipe: `proxmox/tailscale-gw.md`.
 - **Bulk NAS:** `truenas-bulk-52tb` (TrueNAS Core VM) — first-class tailnet node.
   Replication targets / NFS exports / artifact uploads address it by this name,
@@ -26,7 +28,9 @@ _Last updated: 2026-08-27_
 - **n8n:** `n8n` (LXC, compute site) — native npm under systemd, listening on its
   tailnet address only: `http://n8n:5678`. See `proxmox/n8n.md`,
   `mini/mcp-config.md`.
-- **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS).
+- **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS),
+  `edgepve` (edge — host tailscale is its management path; see
+  `proxmox/edgepve.md`).
 - **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM internals,
   storage pools, Tailscale ACLs.
 
@@ -60,17 +64,18 @@ n8n MCP (connected), kubeconfig, and its own SSH key trusted by `dellpve`,
 `naspve`, `truenas-bulk-52tb`. Remaining interactive steps in
 `mini/setup.md`.
 
-## Parked (deliberate, not forgotten)
+## Edge site buildout (2026-09-01)
 
-- **Edge-site Proxmox box (N150, 16GB DDR5, 500GB NVMe) — rack integration
-  unfinished.** Its committed role: the edge gateway LXC pair member
-  (`proxmox/tailscale-gw.md` is already parameterized for this build) —
-  though note the workbench currently covers edge exit-node duty. Beyond
-  that it's expected to be underused; candidate roles to weigh later:
-  cross-site watchdog (edge node probing compute-site services and
-  alerting, and vice versa), second DNS/Pi-hole for edge resilience,
-  or a small edge worker for latency-sensitive jobs once jobs-mcp exists.
-  No commitment yet — revisit after jobs-mcp v1.
+The parked edge N150 is live: `edgepve` (dedicated untagged mgmt NIC +
+VLAN-aware 10G guest trunk, PVE 9, restart-proven — `proxmox/edgepve.md`)
+with first tenant `tailscale-gw-edge` (CT 101, servers-VLAN leg only).
+Standing decision recorded in the host doc: the gateway never gets a
+mgmt-VLAN leg — the host's own tailnet membership is the management path.
+Beyond gateway duty the box remains expected-underused; candidate roles
+unchanged (cross-site watchdog, second DNS/Pi-hole, small edge worker for
+latency-sensitive jobs once jobs-mcp lands) — still no commitment.
+
+## Parked (deliberate, not forgotten)
 - **knowledge-mcp vector store — candidates to weigh at spec time:**
   (a) Postgres + pgvector in an LXC on the edge N150, data on its local
   NVMe (one SQL surface for vectors+metadata, multi-client, backups to the
