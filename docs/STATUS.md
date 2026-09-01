@@ -82,6 +82,40 @@ Beyond gateway duty the box remains expected-underused; candidate roles
 unchanged (cross-site watchdog, second DNS/Pi-hole, small edge worker for
 latency-sensitive jobs once jobs-mcp lands) — still no commitment.
 
+## Pulse check (2026-09-01, session start)
+
+All four inherited-stack checks green: jobs-mcp `healthz`/`readyz` 200 over
+the tailnet; smoke-heartbeat `enqueue → succeeded` (attempts:1, ~700 ms
+through the n8n bridge); all 8 Flux kustomizations Ready at `main`; all three
+gateways (`tailscale-gw`, `tailscale-gw2`, `tailscale-gw-edge`) online and
+advertising. ServiceMonitor confirmed scraping (`jobs_bridge_up`=1).
+
+Findings to know about (none block work, all pre-existing):
+
+- **Node disk at 73%** (98 GiB fs, 71 GiB used). Under `local-path`,
+  `kubelet_volume_stats_*` for any PVC reports the *node filesystem*, not the
+  claim — so the spec's "PVC > 80%" alert is really a node-disk alert and is
+  only ~7 points from firing on day one. The 1 Gi claim itself is unenforced;
+  `jobs_db_bytes` (28 KiB today) is the app-level complement.
+- **Alertmanager routes to nowhere**: the kube-prometheus-stack HelmRelease
+  carries no `values:` at all — chart-default Alertmanager config, everything
+  to the null receiver. Alerts fire invisibly today (hence this session's
+  alert-wiring step).
+- **Standing false positives from chart defaults on k3s**:
+  `KubeProxyDown`/`KubeSchedulerDown`/`KubeControllerManagerDown` fire
+  permanently (k3s embeds those components; there is nothing to scrape).
+  Must be disabled in values before any real receiver is wired.
+- **`phyt-system` stuck job (not this repo's workload)**: namespace is
+  Flux-labeled but no manifests live here and the cluster's only Flux source
+  is this repo — orphaned-from-git tenant of the shared cluster.
+  `minio-bucket-setup` has been `ImagePullBackOff` for 215 days
+  (`minio/mc:RELEASE.2025-01-20T16-28-41Z`), keeping `KubeJobNotCompleted`
+  permanently firing. Flagged to operator; not touched (destructive +
+  not-ours rules).
+- Cosmetic: kubelet exports a stale duplicate `kubelet_volume_stats_*` series
+  for `jobs-mcp-data` labeled `namespace="default"` (no such PVC/pod exists);
+  alert rules scope `namespace="jobs-mcp"` and are immune.
+
 ## Parked (deliberate, not forgotten)
 - **knowledge-mcp vector store — candidates to weigh at spec time:**
   (a) Postgres + pgvector in an LXC on the edge N150, data on its local
