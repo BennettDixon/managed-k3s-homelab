@@ -17,17 +17,19 @@ merge the deploy PR until ALL of these exist:
 
 ## One-time prerequisites
 
-1. **AWS Secrets Manager entries** (us-east-1, same account as other `k3s_*`
-   keys). Each is a JSON object:
-   - `k3s_jobs_mcp_bearer_token` — `{"token": "<48+ random hex>"}`
-   - `k3s_jobs_mcp_webhook_secret` — `{"secret": "<48+ random hex>"}` — the
-     SAME value must be present as `JOBS_WEBHOOK_SECRET` in the n8n LXC's
-     `/etc/n8n/n8n.env` (workflows verify the header against `$env`).
-   - `k3s_jobs_mcp_n8n_api_key` — `{"api_key": "<second key from n8n UI,
-     Settings → n8n API, labeled jobs-mcp>"}`. Optional at runtime (feeds a
-     non-fatal startup check) but the ExternalSecret still wants it to sync.
-   - `k3s_harbor_docker_pull_jobs` — `{"registry": "harbor.internal",
-     "username": "<robot name>", "password": "<robot secret>"}`
+1. **AWS Secrets Manager entries — terraform-managed** (`terraform/main.tf`,
+   same pattern as every other `k3s_*` secret): set the five
+   `jobs_mcp_*`/`jobs_harbor_*` values in your `terraform.tfvars` (template:
+   `terraform.tfvars.empty`) and `terraform apply`. Value sources:
+   - `jobs_mcp_bearer_token` / `jobs_mcp_webhook_secret` — generated at
+     slice-2 time. The webhook secret's SAME value must be present as
+     `JOBS_WEBHOOK_SECRET` in the n8n LXC's `/etc/n8n/n8n.env` (workflows
+     verify the header against `$env`).
+   - `jobs_mcp_n8n_api_key` — second key from the n8n UI (Settings → n8n
+     API), labeled `jobs-mcp`. Optional at runtime (non-fatal startup check)
+     but the ExternalSecret still wants it to sync.
+   - `jobs_harbor_docker_pull_username` / `_password` — the pull-only robot
+     from step 2 (full `robot$jobs+...` name).
 2. **Harbor**: private project `jobs`; robot scoped to pull on it; your
    docker-push user as maintainer.
 3. **`cluster-vars` secret** (flux-system) — values used by manifests but
