@@ -82,6 +82,13 @@ n8n MCP (connected), kubeconfig, and its own SSH key trusted by `dellpve`,
   jobs-mcp stays SQLite-local per its spec.
 - **Redis at compute site** — deploy only when its first real consumer
   lands (likely the model gateway: counters, cache, pub/sub); not before.
+- **Lightsail proxy terraform drift** (found 2026-09-01): a full
+  `terraform apply` wants to REPLACE the public proxy instance (user_data
+  can't be reproduced — the original tailscale auth key was one-time — plus
+  provider-schema drift on its public-ports resource) and tag-tweak one IAM
+  user. Harmless today (secret changes go through targeted applies), but the
+  proxy needs its own maintenance window: fresh tailscale auth key, brief
+  public-site downtime, then untargeted applies are clean again.
 - **Harbor UI on the tailnet** (2026-09-01): expose the portal via the
   tailscale operator (same `tailscale.com/expose` pattern as personal-site)
   so the UI needs no subnet-route/hosts-file setup on clients. Additive and
