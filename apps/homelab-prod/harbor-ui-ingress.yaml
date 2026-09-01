@@ -1,0 +1,53 @@
+# Harbor UI on the tailnet: https://harbor-ui.<tailnet>.ts.net via the
+# tailscale operator (ingressClassName: tailscale, LE cert at first access).
+# Lives in the PROD overlay, not apps/base/harbor — the development overlay
+# consumes that base and has no tailscale operator.
+#
+# Scope: UI only. The registry hostname stays harbor.internal everywhere
+# (image refs, pull secrets, docker login); this just removes the
+# subnet-route/hosts-file requirement for browsers. Path map mirrors the
+# chart's own traefik ingress: / -> portal, everything API-ish -> core.
+# Known wart: absolute URLs Harbor derives from externalURL (e.g. the
+# docker-login snippets in the UI) still say harbor.internal — correct for
+# the registry, just not clickable from an un-routed client.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: harbor-ui
+  namespace: harbor
+spec:
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - harbor-ui
+  rules:
+    - http:
+        paths:
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: harbor-core
+                port:
+                  number: 80
+          - path: /c/
+            pathType: Prefix
+            backend:
+              service:
+                name: harbor-core
+                port:
+                  number: 80
+          - path: /service/
+            pathType: Prefix
+            backend:
+              service:
+                name: harbor-core
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: harbor-portal
+                port:
+                  number: 80
