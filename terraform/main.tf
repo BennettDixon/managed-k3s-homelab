@@ -171,6 +171,16 @@ module "jobs_mcp_n8n_api_key_secret" {
   })
 }
 
+# Alert delivery (docs/runbooks/alerts.md): Alertmanager -> n8n webhook.
+module "alerts_webhook_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_alerts_webhook_secret"
+  description = "Bearer credential Alertmanager presents to the n8n alerts webhook; same value must live in the n8n LXC env as ALERTS_WEBHOOK_SECRET"
+  secret_value = jsonencode({
+    secret = var.alerts_webhook_secret
+  })
+}
+
 module "jobs_harbor_docker_pull_secret" {
   source      = "./modules/secrets_manager"
   secret_name = "k3s_harbor_docker_pull_jobs"
