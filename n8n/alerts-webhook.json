@@ -1,0 +1,72 @@
+{
+  "name": "alerts-webhook",
+  "nodes": [
+    {
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alerts",
+        "responseMode": "responseNode"
+      },
+      "webhookId": "cc11f7ca-5128-49d3-a726-68f5b8445c4d"
+    },
+    {
+      "id": "code-1",
+      "name": "Verify And Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// First node MUST verify the bearer credential (same discipline as the\n// jobs webhooks). The value lives in the LXC env (/etc/n8n/n8n.env) as\n// ALERTS_WEBHOOK_SECRET, never in this JSON. Alertmanager presents it as\n// an Authorization: Bearer header (credentials_file in its config).\nconst req = $input.first().json;\nconst secret = $env.ALERTS_WEBHOOK_SECRET;\nconst presented = (req.headers || {})['authorization'];\nif (!secret || presented !== `Bearer ${secret}`) {\n  return [{ json: { ok: false, error: 'unauthorized' } }];\n}\nconst body = req.body || {};\n// Alertmanager webhook payload: {status, groupLabels, alerts: [...]}.\nconst alerts = (body.alerts || []).map((a) => ({\n  status: a.status,\n  alertname: a.labels?.alertname ?? 'unknown',\n  namespace: a.labels?.namespace ?? '',\n  severity: a.labels?.severity ?? '',\n  summary: a.annotations?.summary ?? '',\n  since: a.startsAt ?? '',\n}));\nconst headline = alerts\n  .map((a) => `[${a.status.toUpperCase()}] ${a.alertname}${a.namespace ? ` (${a.namespace})` : ''}: ${a.summary}`)\n  .join('\\n');\n// Terminal channel seam: attach the notification node (email / Telegram /\n// push) AFTER this node in the UI, using {{$json.headline}} — then export\n// back to n8n/ per the README. Until then, executions in the n8n UI are the\n// delivery record.\nreturn [{ json: { ok: true, group_status: body.status ?? '', headline, alerts } }];"
+      }
+    },
+    {
+      "id": "respond-1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "respondWith": "firstIncomingItem"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify And Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify And Format": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
