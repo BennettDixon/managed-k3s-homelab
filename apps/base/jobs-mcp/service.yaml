@@ -3,6 +3,10 @@ kind: Service
 metadata:
   name: jobs-mcp
   namespace: jobs-mcp
+  labels:
+    # The ServiceMonitor selects Services by this label — without it the
+    # monitor matches nothing and Prometheus silently never scrapes us.
+    app: jobs-mcp
   annotations:
     # Tailnet-only exposure: clients call http://jobs-mcp/mcp (spec §2).
     tailscale.com/expose: "true"

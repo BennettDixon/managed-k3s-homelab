@@ -33,10 +33,10 @@ spec:
           env:
             - name: PORT
               value: "8080"
-            - name: DB_PATH
-              value: /data/jobs.db
-            - name: REGISTRY_PATH
-              value: /config/registry.yaml
+            # DB_PATH and REGISTRY_PATH are deliberately NOT set: the image's
+            # compiled defaults (/data/jobs.db, /config/registry.yaml) match
+            # the volumeMounts below, and pinning them here would be a second
+            # source of truth for image-internal paths.
             # ExternalName egress Service in this namespace (operator-rewired).
             - name: N8N_BASE_URL
               value: http://n8n.jobs-mcp.svc.cluster.local:5678
@@ -59,6 +59,9 @@ spec:
                 secretKeyRef:
                   name: jobs-mcp-n8n-api-key
                   key: api_key
+                  # The key feeds a non-fatal startup diagnostic only (spec
+                  # §6); it must never gate the pod.
+                  optional: true
           # Liveness never writes (a full PVC must degrade, not crash-loop);
           # readiness does the DB write-ping. n8n reachability is in neither
           # (spec §8) — the queue accepts enqueues while n8n is down.

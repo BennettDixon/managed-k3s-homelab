@@ -7,7 +7,7 @@ API or UI, then export back here (`GET /api/v1/workflows/<id>` filtered to
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `smoke-heartbeat.json` | `GET /webhook/smoke-heartbeat` | Returns `{service, status, ts}` — proves the deterministic-executor control path (API create → activate → trigger → recorded execution). First job, 2026-08-27. |
+| `smoke-heartbeat.json` | `POST /webhook/jobs/smoke-heartbeat` | jobs-mcp executor contract (spec §6): verifies `X-Jobs-Webhook-Secret` against `$env.JOBS_WEBHOOK_SECRET` in its first node, returns the completion report `{ok, result, artifacts, spent_usd}`. Migrated from the original GET heartbeat 2026-09-01. |
 
 Secrets never live in exports: n8n credentials stay in the instance's own
 credential store; the API key used to manage workflows stays in the
