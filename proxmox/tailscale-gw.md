@@ -5,8 +5,10 @@ and offers itself as an exit node. One per site minimum; two per site for HA
 (Tailscale automatically fails over between subnet routers advertising the
 same routes).
 
-Built twice so far (compute site: `tailscale-gw` on dellpve, `tailscale-gw2`
-on naspve). Parameterized for reuse at other sites.
+Built three times (compute site: `tailscale-gw` on dellpve, `tailscale-gw2`
+on naspve; edge site: `tailscale-gw-edge` on edgepve as CT 101 — first
+build exercising `<VLAN_OPT>`, a tagged leg on a VLAN-aware trunk bridge).
+Parameterized for reuse at other sites.
 
 ## Parameters
 
