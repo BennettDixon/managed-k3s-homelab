@@ -82,6 +82,12 @@ n8n MCP (connected), kubeconfig, and its own SSH key trusted by `dellpve`,
   jobs-mcp stays SQLite-local per its spec.
 - **Redis at compute site** — deploy only when its first real consumer
   lands (likely the model gateway: counters, cache, pub/sub); not before.
+- **Harbor UI on the tailnet** (2026-09-01): expose the portal via the
+  tailscale operator (same `tailscale.com/expose` pattern as personal-site)
+  so the UI needs no subnet-route/hosts-file setup on clients. Additive and
+  cheap. The registry *hostname* stays `harbor.internal` — renaming it is a
+  real migration (image refs, pull secrets, containerd trust, CA SANs,
+  build scripts) with no current forcing event.
 
 ## Next session starts with
 
