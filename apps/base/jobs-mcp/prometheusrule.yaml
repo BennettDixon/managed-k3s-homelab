@@ -1,0 +1,71 @@
+# Starter alerts (spec §9). Delivery: Alertmanager -> n8n webhook receiver
+# (docs/runbooks/alerts.md).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: jobs-mcp
+  namespace: jobs-mcp
+  labels:
+    # Without this label the default-valued kube-prometheus-stack silently
+    # ignores the rule — same trap as the ServiceMonitor (spec §9).
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: jobs-mcp.rules
+      rules:
+        - alert: JobsBridgeDown
+          expr: jobs_bridge_up{namespace="jobs-mcp"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "jobs-mcp cannot reach the n8n executor bridge"
+            description: >-
+              jobs_bridge_up has been 0 for 10 minutes. Dispatch is frozen with
+              backoff; enqueue still works and nothing is failed by bridge
+              downtime (spec §5). Checklist: docs/runbooks/jobs-mcp.md
+              "Bridge down".
+        - alert: JobsQueueStalled
+          expr: jobs_queue_oldest_age_seconds{namespace="jobs-mcp"} > 1800
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "oldest queued job is over 30 minutes old"
+            description: >-
+              Work is not draining: the oldest queued job has waited more than
+              30 minutes. If JobsBridgeDown is also firing that is the cause;
+              otherwise suspect a stuck dispatcher, a slow/stuck n8n workflow
+              eating both dispatch slots, or priority starvation.
+        - alert: JobsPvcDiskFilling
+          expr: >-
+            kubelet_volume_stats_used_bytes{namespace="jobs-mcp",persistentvolumeclaim="jobs-mcp-data"}
+            / kubelet_volume_stats_capacity_bytes{namespace="jobs-mcp",persistentvolumeclaim="jobs-mcp-data"}
+            > 0.80
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "filesystem behind the jobs-mcp PVC is over 80% full"
+            description: >-
+              Under local-path this measures the NODE root filesystem, not the
+              1Gi claim (which is unenforced) — so this is really "the k3s node
+              disk is filling", observed from the volume that dies first when
+              it fills (SQLite writes start failing; enqueue errors cleanly,
+              liveness stays up by design). Baseline when wired 2026-09-01: 73%.
+              Free node disk or grow the underlying disk; jobs-mcp itself
+              rarely contributes (see JobsDbOversized for its share).
+        - alert: JobsDbOversized
+          expr: jobs_db_bytes{namespace="jobs-mcp"} > 0.8 * 1073741824
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "jobs.db exceeds 80% of the PVC's nominal 1Gi"
+            description: >-
+              The app-level complement to JobsPvcDiskFilling: local-path never
+              enforces the 1Gi claim, so the DB crossing ~820MB means job
+              volume has outgrown v1 assumptions (28KiB at wiring time).
+              Investigate row growth before the node disk pays for it;
+              terminal-row pruning is a deliberate destructive task, not
+              automatic (spec §11).

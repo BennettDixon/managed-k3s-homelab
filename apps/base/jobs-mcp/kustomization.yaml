@@ -7,6 +7,7 @@ resources:
   - pvc.yaml
   - egress-n8n.yaml
   - servicemonitor.yaml
+  - prometheusrule.yaml
   # ExternalSecrets live in this base, NOT apps/secrets/: the secrets path is
   # shared with the development cluster (which has no jobs-mcp namespace), and
   # keeping them here scopes both the resources and any missing-SM-entry
