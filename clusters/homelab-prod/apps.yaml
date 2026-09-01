@@ -76,3 +76,13 @@ spec:
   prune: true
   wait: true
   timeout: 5m0s
+  # Values that must exist on-cluster but never in this public repo
+  # (ts.net FQDNs — decision 2026-08-30). The secret is created once,
+  # out of band: see docs/runbooks/jobs-mcp.md. `optional: true` so a
+  # missing secret degrades that one substitution instead of wedging
+  # the whole apps chain.
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: cluster-vars
+        optional: true

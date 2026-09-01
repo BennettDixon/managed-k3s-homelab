@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jobs-mcp
+resources:
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml
+  - egress-n8n.yaml
+  - servicemonitor.yaml
+configMapGenerator:
+  # Hash-suffixed: a registry change rolls the Deployment (spec §4).
+  - name: jobs-mcp-registry
+    files:
+      - registry.yaml
