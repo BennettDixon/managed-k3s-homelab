@@ -1,0 +1,55 @@
+import { readFileSync } from "node:fs";
+import { parse } from "yaml";
+import { z } from "zod";
+import { Ajv, type ValidateFunction } from "ajv";
+import { TASK_TYPE_RE } from "./envelope.js";
+
+// Task-type registry (spec §4). Parsed at startup; parse failure fails
+// readiness. Admission rules enforced here, not at enqueue time.
+// timeout_s is capped at 300: undici's default headers timeout severs the
+// fetch at 300s regardless, and the n8n bridge only sends headers when the
+// workflow completes — a longer registry timeout would be a lie.
+const TaskTypeSchema = z.object({
+  executor: z.literal("n8n"), // "worker" reserved for v2 (spec §11)
+  webhook_path: z.string().regex(/^[a-z0-9][a-z0-9/-]*$/),
+  timeout_s: z.number().int().positive().max(300),
+  max_attempts: z.number().int().positive().max(10),
+  idempotent: z.boolean(),
+  frontend_allowed: z.boolean().default(false),
+  payload_schema: z.record(z.unknown()).optional(),
+});
+
+const RegistrySchema = z.object({
+  task_types: z.record(z.string().regex(TASK_TYPE_RE), TaskTypeSchema),
+});
+
+export type TaskTypeEntry = z.infer<typeof TaskTypeSchema> & {
+  validatePayload?: ValidateFunction;
+};
+export type Registry = Map<string, TaskTypeEntry>;
+
+export function parseRegistry(yamlText: string): Registry {
+  const parsed = RegistrySchema.parse(parse(yamlText));
+  const registry: Registry = new Map();
+  // strict mode is the point: a typo'd JSON Schema keyword (e.g.
+  // "additionalproperties") must fail admission loudly, not compile into a
+  // validator that silently accepts everything — payload_schema is the
+  // security fence for exec-capable task types (spec §4).
+  const ajv = new Ajv({ allErrors: false, strict: true });
+  for (const [name, entry] of Object.entries(parsed.task_types)) {
+    if (entry.executor === "n8n" && !entry.idempotent) {
+      throw new Error(`registry admission: task_type "${name}" has executor n8n and MUST declare idempotent: true (spec §4)`);
+    }
+    const withValidator: TaskTypeEntry = { ...entry };
+    if (entry.payload_schema) {
+      // Compiled at parse time so a broken schema fails admission, not enqueue.
+      withValidator.validatePayload = ajv.compile(entry.payload_schema);
+    }
+    registry.set(name, withValidator);
+  }
+  return registry;
+}
+
+export function loadRegistry(path: string): Registry {
+  return parseRegistry(readFileSync(path, "utf8"));
+}
