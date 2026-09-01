@@ -83,6 +83,23 @@ describe("queue (spec §5)", () => {
     expect(row.finished_at).not.toBeNull();
   });
 
+  it("failAttempt with retryable:false is immediately terminal, preserving the error code", () => {
+    const { id } = queue.enqueue(env());
+    queue.claimNext();
+    queue.failAttempt(id, { code: "result_too_large", message: "too big", retryable: false });
+    const row = queue.get(id)!;
+    expect(row.state).toBe("failed");
+    expect(JSON.parse(row.error!).code).toBe("result_too_large");
+    expect(row.finished_at).not.toBeNull();
+  });
+
+  it("requeue paths clear started_at", () => {
+    const { id } = queue.enqueue(env());
+    queue.claimNext();
+    queue.failAttempt(id, { code: "timeout", message: "t", retryable: true });
+    expect(queue.get(id)!.started_at).toBeNull();
+  });
+
   it("bridge-down requeue reverts the claim without consuming an attempt", () => {
     const { id } = queue.enqueue(env());
     queue.claimNext();

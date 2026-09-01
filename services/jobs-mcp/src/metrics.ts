@@ -10,7 +10,7 @@ export class Metrics {
   readonly enqueued: Counter;
   readonly dispatchDuration: Histogram;
 
-  constructor(queue: Queue, dbBytes: () => number) {
+  constructor(queue: Queue, dbBytes: () => number, taskTypes: string[] = []) {
     this.bridgeUp = new Gauge({ name: "jobs_bridge_up", help: "1 if the last n8n webhook call succeeded at the connection level", registers: [this.registry] });
     this.bridgeUp.set(1);
     this.transitions = new Counter({ name: "jobs_transitions_total", help: "job state transitions", labelNames: ["from", "to"], registers: [this.registry] });
@@ -29,6 +29,12 @@ export class Metrics {
       registers: [this.registry],
       collect() {
         this.reset();
+        // Zero-fill known (state × task_type) combos so an empty queue reads
+        // 0 rather than making the series vanish — dashboards must be able
+        // to tell "queue empty" from "collector broken".
+        for (const s of ["queued", "running", "succeeded", "failed", "canceled"]) {
+          for (const tt of taskTypes) this.labels(s, tt).set(0);
+        }
         for (const row of queue.stateCounts()) this.labels(row.state, row.task_type).set(row.n);
       },
     });

@@ -57,6 +57,23 @@ task_types:
     ).toThrowError();
   });
 
+  it("rejects a TYPO'D schema keyword (ajv strict): additionalproperties must not silently no-op", () => {
+    expect(() =>
+      parseRegistry(`
+task_types:
+  typo-schema:
+    executor: n8n
+    webhook_path: jobs/typo-schema
+    timeout_s: 60
+    max_attempts: 1
+    idempotent: true
+    payload_schema:
+      type: object
+      additionalproperties: false
+`),
+    ).toThrowError();
+  });
+
   it("compiles payload_schema at parse time and rejects a broken schema", () => {
     expect(() =>
       parseRegistry(`

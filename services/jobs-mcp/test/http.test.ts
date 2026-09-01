@@ -38,6 +38,24 @@ describe("http surface (spec §2, §8)", () => {
     }
   });
 
+  it("GET and DELETE /mcp answer 405 (SDK client contract), not HTML 404", async () => {
+    const get = await fetch(`${base}/mcp`);
+    expect(get.status).toBe(405);
+    expect(get.headers.get("allow")).toBe("POST");
+    const del = await fetch(`${base}/mcp`, { method: "DELETE" });
+    expect(del.status).toBe(405);
+  });
+
+  it("malformed JSON bodies get a JSON error, not an HTML error page", async () => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${config.bearerToken}` },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()) as Record<string, unknown>).toMatchObject({ code: "E_SCHEMA" });
+  });
+
   it("mcp endpoint rejects a missing or wrong bearer token", async () => {
     const noAuth = await fetch(`${base}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(noAuth.status).toBe(401);
@@ -115,6 +133,36 @@ describe("http surface (spec §2, §8)", () => {
       artifacts_dir: `/mnt/BulkPoolZ2/artifacts/jobs/smoke-heartbeat/${enq!.id}/`,
       artifacts: [],
     });
+  });
+});
+
+describe("metrics resilience and zero-fill", () => {
+  it("a throwing collector degrades to a 500 scrape, never a crash", async () => {
+    const db = testDb();
+    const registry = testRegistry();
+    const queue = makeQueue(db, registry, new ManualClock());
+    queue.stateCounts = () => {
+      throw new Error("disk I/O error");
+    };
+    const metrics = new Metrics(queue, () => 0);
+    const app = buildApp(db, queue, registry, config, metrics);
+    const srv = await new Promise<Server>((resolve) => {
+      const s = app.listen(0, () => resolve(s));
+    });
+    const addr = srv.address();
+    const b = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
+    const res = await fetch(`${b}/metrics`);
+    expect(res.status).toBe(500);
+    srv.close();
+  });
+
+  it("jobs_state_count zero-fills known states so an empty queue reads 0, not absent", async () => {
+    const db = testDb();
+    const registry = testRegistry();
+    const queue = makeQueue(db, registry, new ManualClock());
+    const metrics = new Metrics(queue, () => 0, ["smoke-heartbeat"]);
+    const text = await metrics.registry.metrics();
+    expect(text).toContain('jobs_state_count{state="queued",task_type="smoke-heartbeat"} 0');
   });
 });
 

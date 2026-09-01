@@ -2,7 +2,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Queue, JobRow } from "./queue.js";
 import type { Registry } from "./registry.js";
-import type { Config } from "./config.js";
+import { jobArtifactsDir, type Config } from "./config.js";
 import type { Metrics } from "./metrics.js";
 import { validateEnvelope } from "./envelope.js";
 import { JobsError } from "./errors.js";
@@ -15,8 +15,11 @@ import { JobsError } from "./errors.js";
 // errors. Spec §3 requires the opposite (unknown fields ⇒ E_SCHEMA, every
 // error ⇒ {code, message, retryable}), so validateEnvelope must be the ONE
 // validator and must see the caller's arguments verbatim.
-function toolError(err: unknown) {
+// E_INTERNAL contract (spec §3): details logged, never leaked. The log call
+// here is what makes a SQLITE_FULL inside a tool handler debuggable at all.
+function toolError(err: unknown, tool: string, log: (line: Record<string, unknown>) => void) {
   const e = err instanceof JobsError ? err : new JobsError("E_INTERNAL", "internal error", true);
+  if (!(err instanceof JobsError)) log({ evt: "tool_error", tool, error: String(err) });
   return { content: [{ type: "text" as const, text: JSON.stringify(e.toJSON()) }], isError: true };
 }
 
@@ -112,8 +115,8 @@ export function buildMcpServer(
         case "enqueue": {
           const envelope = validateEnvelope(args ?? {}, registry, config.maxBudgetCapUsd);
           const result = queue.enqueue(envelope);
-          metrics.enqueued.labels(envelope.task_type).inc();
           if (!result.idempotent_replay) {
+            metrics.enqueued.labels(envelope.task_type).inc();
             // One line per enqueue (spec §9); never payload contents.
             log({ evt: "enqueue", job_id: result.id, task_type: envelope.task_type, priority: envelope.priority, budget_cap_usd: envelope.budget_cap });
           }
@@ -127,7 +130,7 @@ export function buildMcpServer(
         case "artifacts": {
           const row = queue.get(requireId(args));
           if (!row) throw new JobsError("E_NOT_FOUND", "no such job");
-          const dir = `${config.nasArtifactsBase}/jobs/${row.task_type}/${row.id}/`;
+          const dir = jobArtifactsDir(config, row.task_type, row.id);
           const manifest = row.artifacts ? (JSON.parse(row.artifacts) as { name: string; bytes?: number; sha256?: string; undeclared?: boolean }[]) : [];
           return ok({
             id: row.id,
@@ -146,7 +149,7 @@ export function buildMcpServer(
           throw new JobsError("E_SCHEMA", `unknown tool: ${req.params.name}`);
       }
     } catch (err) {
-      return toolError(err);
+      return toolError(err, req.params.name, log);
     }
   });
 

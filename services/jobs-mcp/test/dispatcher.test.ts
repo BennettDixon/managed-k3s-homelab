@@ -146,12 +146,64 @@ describe("dispatcher / n8n bridge (spec §5–§7)", () => {
     expect(manifest.find((a) => a.name === "debug.log")!.undeclared).toBe(true);
   });
 
-  it("oversized result is rejected (anything bigger is an artifact)", async () => {
+  it("oversized result is TERMINAL with its own code — deterministic violations are not retried", async () => {
     const d = makeDispatcher(fakeFetch(() => jsonResponse({ ok: true, result: { blob: "x".repeat(65 * 1024) } })));
     const { id } = queue.enqueue(env());
     await d.dispatch(queue.claimNext()!);
     const row = queue.get(id)!;
+    expect(row.state).toBe("failed");
     expect(JSON.parse(row.error!).code).toBe("result_too_large");
+  });
+
+  it("oversized response BODY is capped before parsing and fails terminally", async () => {
+    const d = makeDispatcher(fakeFetch(() => new Response("x", { status: 200, headers: { "content-length": "999999999" } })));
+    const { id } = queue.enqueue(env());
+    await d.dispatch(queue.claimNext()!);
+    const row = queue.get(id)!;
+    expect(row.state).toBe("failed");
+    expect(JSON.parse(row.error!).code).toBe("executor_response_too_large");
+  });
+
+  it("explicit nulls in the completion report are tolerated (n8n expressions yield null)", async () => {
+    const d = makeDispatcher(fakeFetch(() => jsonResponse({ ok: true, result: null, artifacts: null, spent_usd: null })));
+    const { id } = queue.enqueue(env());
+    await d.dispatch(queue.claimNext()!);
+    const row = queue.get(id)!;
+    expect(row.state).toBe("succeeded");
+    expect(row.result).toBeNull();
+  });
+
+  it("a traversal artifact name from the executor fails the job terminally, never served", async () => {
+    const d = makeDispatcher(
+      fakeFetch(() => jsonResponse({ ok: true, artifacts: [{ name: "report.json" }, { name: "../../../../secrets/tailnet.key" }] })),
+    );
+    const { id } = queue.enqueue(env({ artifacts_out: ["report.json"] }));
+    await d.dispatch(queue.claimNext()!);
+    const row = queue.get(id)!;
+    expect(row.state).toBe("failed");
+    expect(JSON.parse(row.error!).code).toBe("artifacts_invalid");
+    expect(row.artifacts).toBeNull(); // nothing unsafe was persisted
+  });
+
+  it("a manifest over the entry cap fails terminally", async () => {
+    const many = Array.from({ length: 65 }, (_, i) => ({ name: `f${i}.txt` }));
+    const d = makeDispatcher(fakeFetch(() => jsonResponse({ ok: true, artifacts: many })));
+    const { id } = queue.enqueue(env());
+    await d.dispatch(queue.claimNext()!);
+    expect(JSON.parse(queue.get(id)!.error!).code).toBe("artifacts_invalid");
+  });
+
+  it("bridge-down revert emits the running->queued transition (counter balance)", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const d = new Dispatcher(queue, registry, config, metrics, clock.now, {
+      fetchImpl: fakeFetch(() => {
+        throw new TypeError("fetch failed: ECONNREFUSED");
+      }),
+      log: (l) => lines.push(l),
+    });
+    queue.enqueue(env());
+    await d.dispatch(queue.claimNext()!);
+    expect(lines.some((l) => l.evt === "transition" && l.from === "running" && l.to === "queued")).toBe(true);
   });
 
   it("a null completion body is an attempt failure, never a crash (reviewer-verified crash bug)", async () => {

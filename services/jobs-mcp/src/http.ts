@@ -53,8 +53,27 @@ export function buildApp(db: Database.Database, queue: Queue, registry: Registry
   });
 
   app.get("/metrics", async (_req, res) => {
-    res.set("content-type", metrics.registry.contentType);
-    res.send(await metrics.registry.metrics());
+    // The collect() callbacks run SQL per scrape; a throwing collector must
+    // degrade to a failed scrape, not an unhandled rejection that kills the
+    // process (spec §10: disk trouble degrades, never crash-loops).
+    try {
+      const text = await metrics.registry.metrics();
+      res.set("content-type", metrics.registry.contentType);
+      res.send(text);
+    } catch (err) {
+      log({ evt: "metrics_scrape_failed", error: String(err) });
+      res.status(500).send("metrics collection failed");
+    }
+  });
+
+  // Streamable HTTP conformance: the SDK client probes GET /mcp for an SSE
+  // stream and treats 405 as "not offered" but anything else as an error;
+  // DELETE (session termination) behaves the same.
+  app.get("/mcp", (_req, res) => {
+    res.status(405).set("allow", "POST").json({ code: "E_SCHEMA", message: "SSE not offered; use POST", retryable: false });
+  });
+  app.delete("/mcp", (_req, res) => {
+    res.status(405).set("allow", "POST").json({ code: "E_SCHEMA", message: "sessions are stateless; nothing to terminate", retryable: false });
   });
 
   // MCP Streamable HTTP, stateless mode (spec §2): a fresh transport per
@@ -72,6 +91,12 @@ export function buildApp(db: Database.Database, queue: Queue, registry: Registry
     });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
+  });
+
+  // Body-parser failures (malformed JSON, >256kb) otherwise surface as
+  // express's HTML error pages; MCP callers expect JSON.
+  app.use((err: Error & { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    res.status(err.status ?? 400).json({ code: "E_SCHEMA", message: "invalid request body", retryable: false });
   });
 
   return app;

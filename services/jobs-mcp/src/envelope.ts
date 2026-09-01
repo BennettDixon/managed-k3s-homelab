@@ -15,9 +15,17 @@ export interface Envelope {
 }
 
 const KNOWN_FIELDS = new Set(["v", "task_type", "payload", "budget_cap", "priority", "artifacts_out", "idempotency_key"]);
-const TASK_TYPE_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
+export const TASK_TYPE_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const ARTIFACT_PATH_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 const MAX_JSON_BYTES = 64 * 1024;
+
+// Shared fence for artifact paths: the same rules apply to what clients
+// declare at enqueue AND what executors report back — a completion report is
+// untrusted input, and a traversal name would otherwise flow into the
+// scp-style URIs that artifacts(id) serves.
+export function isSafeArtifactPath(p: string): boolean {
+  return ARTIFACT_PATH_RE.test(p) && !p.startsWith("/") && !p.split("/").includes("..");
+}
 
 export function validateEnvelope(raw: unknown, registry: Registry, maxBudgetCapUsd: number): Envelope {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -81,12 +89,8 @@ export function validateEnvelope(raw: unknown, registry: Registry, maxBudgetCapU
   }
   if (artifactsOut.length > 32) throw new JobsError("E_SCHEMA", "artifacts_out exceeds 32 entries");
   for (const p of artifactsOut) {
-    if (typeof p !== "string" || !ARTIFACT_PATH_RE.test(p)) {
-      throw new JobsError("E_SCHEMA", `artifacts_out path invalid: ${String(p)}`);
-    }
-    // Explicit checks on top of the regex (spec §3): no ".." segment, no leading "/".
-    if (p.startsWith("/") || p.split("/").includes("..")) {
-      throw new JobsError("E_SCHEMA", `artifacts_out path escapes the job directory: ${p}`);
+    if (typeof p !== "string" || !isSafeArtifactPath(p)) {
+      throw new JobsError("E_SCHEMA", `artifacts_out path invalid or escapes the job directory: ${String(p)}`);
     }
   }
 

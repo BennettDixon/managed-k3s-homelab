@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { z } from "zod";
 import { Ajv, type ValidateFunction } from "ajv";
+import { TASK_TYPE_RE } from "./envelope.js";
 
 // Task-type registry (spec §4). Parsed at startup; parse failure fails
 // readiness. Admission rules enforced here, not at enqueue time.
@@ -19,7 +20,7 @@ const TaskTypeSchema = z.object({
 });
 
 const RegistrySchema = z.object({
-  task_types: z.record(z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/), TaskTypeSchema),
+  task_types: z.record(z.string().regex(TASK_TYPE_RE), TaskTypeSchema),
 });
 
 export type TaskTypeEntry = z.infer<typeof TaskTypeSchema> & {
@@ -30,7 +31,11 @@ export type Registry = Map<string, TaskTypeEntry>;
 export function parseRegistry(yamlText: string): Registry {
   const parsed = RegistrySchema.parse(parse(yamlText));
   const registry: Registry = new Map();
-  const ajv = new Ajv({ allErrors: false, strict: false });
+  // strict mode is the point: a typo'd JSON Schema keyword (e.g.
+  // "additionalproperties") must fail admission loudly, not compile into a
+  // validator that silently accepts everything — payload_schema is the
+  // security fence for exec-capable task types (spec §4).
+  const ajv = new Ajv({ allErrors: false, strict: true });
   for (const [name, entry] of Object.entries(parsed.task_types)) {
     if (entry.executor === "n8n" && !entry.idempotent) {
       throw new Error(`registry admission: task_type "${name}" has executor n8n and MUST declare idempotent: true (spec §4)`);

@@ -32,20 +32,29 @@ const queue = new Queue(db, registry);
 const swept = queue.bootSweep();
 log({ evt: "boot_sweep", ...swept });
 
-const metrics = new Metrics(queue, () => {
-  try {
-    return statSync(config.dbPath).size;
-  } catch {
-    return 0;
-  }
-});
+const metrics = new Metrics(
+  queue,
+  () => {
+    try {
+      return statSync(config.dbPath).size;
+    } catch {
+      return 0;
+    }
+  },
+  [...registry.keys()],
+);
 metrics.transitions.labels("running", "queued").inc(swept.requeued);
 metrics.transitions.labels("running", "failed").inc(swept.failed);
 
 const dispatcher = new Dispatcher(queue, registry, config, metrics, Date.now, { log });
-if (registryError === null) {
+// Dispatch only with a non-empty, successfully parsed registry: an empty map
+// (parse failure OR a valid-but-empty task_types) would terminal-fail every
+// queued job as task_type_removed — and terminal rows are immutable.
+if (registryError === null && registry.size > 0) {
   dispatcher.start();
   void n8nStartupCheck(config, registry, log);
+} else {
+  log({ evt: "dispatch_disabled", reason: registryError ?? "registry has no task_types" });
 }
 
 const app = buildApp(db, queue, registry, config, metrics, { registryError, log });

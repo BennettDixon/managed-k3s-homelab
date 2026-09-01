@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { Queue, JobRow } from "./queue.js";
 import type { Registry } from "./registry.js";
-import type { Config } from "./config.js";
+import { jobArtifactsDir, type Config } from "./config.js";
 import type { Metrics } from "./metrics.js";
+import { isSafeArtifactPath } from "./envelope.js";
 
 // n8n deterministic-executor bridge (spec §6): one synchronous POST to
 // /webhook/jobs/<task_type>, answered by a Respond-to-Webhook final node.
@@ -12,15 +13,48 @@ import type { Metrics } from "./metrics.js";
 // return null, a string, or garbage shapes. It is schema-validated before a
 // single property is read — reviewer-verified that a blind cast here crashes
 // the process via unhandled rejection, and repeats after every boot sweep.
+// nullish() everywhere optional: n8n expressions yield explicit JSON nulls
+// for absent values, and rejecting those would terminally fail good jobs.
+// Manifest entries are pruned to the contract fields (no passthrough) and
+// error strings capped — all of this ends up persisted in the row.
 const CompletionReportSchema = z.object({
   ok: z.boolean(),
-  result: z.unknown().optional(),
-  artifacts: z.array(z.object({ name: z.string() }).passthrough()).optional(),
-  spent_usd: z.number().optional(),
-  error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional(),
+  result: z.unknown(),
+  artifacts: z.array(z.object({ name: z.string(), bytes: z.number().nullish(), sha256: z.string().max(128).nullish() })).nullish(),
+  spent_usd: z.number().nullish(),
+  error: z.object({ code: z.string().max(64).nullish(), message: z.string().max(1024).nullish() }).nullish(),
 });
 
 const MAX_RESULT_BYTES = 64 * 1024;
+// The whole response body is byte-capped BEFORE parsing: result (≤64KiB) +
+// manifest + wrapper must fit; anything bigger is an artifact, and an
+// unbounded res.json() would let one bad Respond node OOM the pod.
+const MAX_RESPONSE_BYTES = 256 * 1024;
+const MAX_MANIFEST_ENTRIES = 64;
+
+// Read a response body with a hard byte cap; null means "over cap".
+async function readBodyCapped(res: Response, cap: number): Promise<string | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > cap) return null;
+  if (!res.body) {
+    const text = await res.text();
+    return Buffer.byteLength(text, "utf8") > cap ? null : text;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 export interface DispatcherOpts {
   fetchImpl?: typeof fetch;
@@ -114,10 +148,6 @@ export class Dispatcher {
     }
   }
 
-  private artifactsDir(job: JobRow): string {
-    return `${this.config.nasArtifactsBase}/jobs/${job.task_type}/${job.id}/`;
-  }
-
   async dispatch(job: JobRow): Promise<void> {
     const entry = this.registry.get(job.task_type);
     if (!entry) {
@@ -133,7 +163,7 @@ export class Dispatcher {
       attempt: job.attempts,
       payload: JSON.parse(job.payload),
       budget_cap_usd: job.budget_cap_usd,
-      artifacts_dir: this.artifactsDir(job),
+      artifacts_dir: jobArtifactsDir(this.config, job.task_type, job.id),
       artifacts_out: JSON.parse(job.artifacts_out),
     };
 
@@ -161,6 +191,11 @@ export class Dispatcher {
         this.bridgeBackoffUntil = this.now() + backoffMs;
         this.metrics.bridgeUp.set(0);
         this.queue.requeueBridgeDown(job.id, this.bridgeBackoffUntil);
+        // The revert is a real state transition — it must appear in the
+        // transitions counter (or queued→running double-counts during
+        // outages) and the per-transition log stream.
+        this.metrics.transitions.labels("running", "queued").inc();
+        this.log({ evt: "transition", job_id: job.id, task_type: job.task_type, from: "running", to: "queued", attempt: job.attempts - 1, error: "bridge_down" });
         this.log({ evt: "bridge_down", job_id: job.id, backoff_ms: backoffMs, error: String(err) });
       }
       return;
@@ -174,9 +209,17 @@ export class Dispatcher {
       return;
     }
 
+    const bodyText = await readBodyCapped(res, MAX_RESPONSE_BYTES);
+    if (bodyText === null) {
+      // Deterministic contract violation: the same response comes back on
+      // every retry, so this is terminal (retryable: false → failTerminal
+      // via queue.failAttempt's non-retryable branch).
+      this.failAttempt(job, started, { code: "executor_response_too_large", message: `response exceeds ${MAX_RESPONSE_BYTES} bytes; anything bigger is an artifact`, retryable: false });
+      return;
+    }
     let rawBody: unknown;
     try {
-      rawBody = await res.json();
+      rawBody = JSON.parse(bodyText);
     } catch {
       this.failAttempt(job, started, { code: "executor_bad_response", message: "webhook response was not JSON", retryable: true });
       return;
@@ -199,7 +242,7 @@ export class Dispatcher {
       return;
     }
 
-    const resultJson = report.result === undefined ? null : JSON.stringify(report.result);
+    const resultJson = report.result === undefined || report.result === null ? null : JSON.stringify(report.result);
     if (resultJson !== null && Buffer.byteLength(resultJson, "utf8") > MAX_RESULT_BYTES) {
       this.failAttempt(job, started, { code: "result_too_large", message: "result exceeds 64 KiB; anything bigger is an artifact", retryable: false });
       return;
@@ -207,12 +250,24 @@ export class Dispatcher {
 
     // Artifact contract (spec §7, hard): every declared artifacts_out path must
     // appear in the reported manifest, else the job FAILS (terminal). Reported-
-    // but-undeclared files are recorded and flagged, not fatal.
+    // but-undeclared files are recorded and flagged, not fatal — but every
+    // reported NAME must still pass the same path fence as enqueue: a
+    // traversal name from a compromised workflow would otherwise be served
+    // verbatim inside artifacts(id) URIs.
     const declared: string[] = JSON.parse(job.artifacts_out);
     const reported = report.artifacts ?? [];
+    if (reported.length > MAX_MANIFEST_ENTRIES) {
+      this.failAttempt(job, started, { code: "artifacts_invalid", message: `manifest exceeds ${MAX_MANIFEST_ENTRIES} entries`, retryable: false });
+      return;
+    }
+    const unsafe = reported.find((a) => !isSafeArtifactPath(a.name));
+    if (unsafe) {
+      this.failAttempt(job, started, { code: "artifacts_invalid", message: `reported artifact name invalid or escapes the job directory: ${unsafe.name.slice(0, 200)}`, retryable: false });
+      return;
+    }
     const reportedNames = new Set(reported.map((a) => a.name));
     const missing = declared.filter((d) => !reportedNames.has(d));
-    const manifest = reported.map((a) => ({ ...a, undeclared: !declared.includes(a.name) || undefined }));
+    const manifest = reported.map((a) => ({ name: a.name, bytes: a.bytes ?? undefined, sha256: a.sha256 ?? undefined, undeclared: !declared.includes(a.name) || undefined }));
 
     if (missing.length > 0) {
       this.queue.failTerminal(

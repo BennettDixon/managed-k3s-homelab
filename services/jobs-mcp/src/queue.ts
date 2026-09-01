@@ -123,22 +123,29 @@ export class Queue {
       .run(JSON.stringify(error), artifactsManifest ?? null, this.now(), id);
   }
 
-  // Attempt failed: retry with jittered exponential backoff or fail terminally
-  // (spec §5): not_before = now + 30s·2^attempts, cap 15 min.
+  // Jittered exponential backoff (spec §5): 30s·2^attempts, cap 15 min.
+  private nextAttemptAt(attempts: number): number {
+    const backoffMs = Math.min(30_000 * 2 ** attempts, 15 * 60_000);
+    return this.now() + backoffMs + Math.floor(backoffMs * 0.2 * Math.random());
+  }
+
+  // Attempt failed: retry with backoff, or fail terminally when attempts are
+  // exhausted OR the error is non-retryable — a deterministic contract
+  // violation (result_too_large, artifacts_invalid) re-runs identically, so
+  // retrying it only wastes executions and buries the real error code.
   failAttempt(id: string, error: { code: string; message: string; retryable: boolean }): void {
     const tx = this.db.transaction(() => {
       const row = this.get(id);
       if (!row || row.state !== "running") return;
-      if (row.attempts >= row.max_attempts) {
+      if (!error.retryable || row.attempts >= row.max_attempts) {
+        const terminal = error.retryable ? { code: "retries_exhausted", message: error.message, retryable: false } : error;
         this.db
           .prepare("UPDATE jobs SET state = 'failed', error = ?, finished_at = ? WHERE id = ?")
-          .run(JSON.stringify({ code: "retries_exhausted", message: error.message, retryable: false }), this.now(), id);
+          .run(JSON.stringify(terminal), this.now(), id);
       } else {
-        const backoffMs = Math.min(30_000 * 2 ** row.attempts, 15 * 60_000);
-        const jitter = Math.floor(backoffMs * 0.2 * Math.random());
         this.db
-          .prepare("UPDATE jobs SET state = 'queued', error = ?, not_before = ? WHERE id = ?")
-          .run(JSON.stringify(error), this.now() + backoffMs + jitter, id);
+          .prepare("UPDATE jobs SET state = 'queued', error = ?, not_before = ?, started_at = NULL WHERE id = ?")
+          .run(JSON.stringify(error), this.nextAttemptAt(row.attempts), id);
       }
     });
     tx();
@@ -174,11 +181,9 @@ export class Queue {
       let failed = 0;
       for (const row of orphans) {
         if (row.attempts < row.max_attempts) {
-          const backoffMs = Math.min(30_000 * 2 ** row.attempts, 15 * 60_000);
-          const jitter = Math.floor(backoffMs * 0.2 * Math.random());
           this.db
-            .prepare("UPDATE jobs SET state = 'queued', not_before = ? WHERE id = ?")
-            .run(this.now() + backoffMs + jitter, row.id);
+            .prepare("UPDATE jobs SET state = 'queued', not_before = ?, started_at = NULL WHERE id = ?")
+            .run(this.nextAttemptAt(row.attempts), row.id);
           requeued++;
         } else {
           this.db
