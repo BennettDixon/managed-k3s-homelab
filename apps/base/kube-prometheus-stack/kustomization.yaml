@@ -4,4 +4,3 @@ namespace: kube-prometheus-stack
 resources:
   - release.yaml
   - repository.yaml
-  - alerts-webhook-secret.yaml

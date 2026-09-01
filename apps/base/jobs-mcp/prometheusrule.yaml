@@ -13,18 +13,41 @@ spec:
   groups:
     - name: jobs-mcp.rules
       rules:
+        - alert: JobsMcpMetricsAbsent
+          # Instant-vector alerts silently disarm when the series vanishes
+          # (deployment deleted/scaled to 0, Service selector drift, monitor
+          # release-label lost — a trap this repo has hit twice). This guard
+          # fires precisely then. TargetDown covers scrape-failing; this
+          # covers target-gone. for: 10m absorbs Recreate-deploy staleness.
+          expr: absent(jobs_bridge_up{namespace="jobs-mcp"})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "jobs-mcp metrics have vanished from Prometheus"
+            description: >-
+              No jobs_bridge_up series exists: the jobs-mcp scrape target is
+              gone (not merely failing — TargetDown covers that). Check the
+              Deployment, the Service's app label, and the ServiceMonitor's
+              release label. While this fires, every other jobs-mcp alert is
+              blind.
         - alert: JobsBridgeDown
           expr: jobs_bridge_up{namespace="jobs-mcp"} == 0
           for: 10m
           labels:
             severity: warning
           annotations:
-            summary: "jobs-mcp cannot reach the n8n executor bridge"
+            summary: "jobs-mcp dispatch attempts to the n8n bridge are failing"
             description: >-
-              jobs_bridge_up has been 0 for 10 minutes. Dispatch is frozen with
-              backoff; enqueue still works and nothing is failed by bridge
-              downtime (spec §5). Checklist: docs/runbooks/jobs-mcp.md
-              "Bridge down".
+              Dispatch attempts have failed at the connection level for 10
+              minutes. Dispatch is frozen with backoff; enqueue still works
+              and nothing is failed by bridge downtime (spec §5). Checklist:
+              docs/runbooks/jobs-mcp.md "Bridge down". Caveats (gauge is
+              event-driven, written only by dispatch attempts): an idle queue
+              means a dead bridge goes UNDETECTED until work arrives; and if
+              queued jobs are canceled during an outage the gauge can stay 0
+              after the bridge recovers, until the next successful dispatch
+              clears it.
         - alert: JobsQueueStalled
           expr: jobs_queue_oldest_age_seconds{namespace="jobs-mcp"} > 1800
           for: 10m

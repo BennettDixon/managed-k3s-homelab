@@ -1,0 +1,64 @@
+# Prod-only Alertmanager receiver wiring (docs/runbooks/alerts.md). Lives here
+# rather than in the base because apps/development consumes the same base: the
+# receiver config would point dev at a jobs-mcp egress Service that doesn't
+# exist there, and the secret mount would wedge dev's alertmanager pod when the
+# ExternalSecret (also prod-only, alerts-webhook-secret.yaml) can't sync.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: kube-prometheus-stack
+spec:
+  chart:
+    spec:
+      # Pinned => update manually. The receiver config below inherits the
+      # chart's default global/inhibit_rules/templates, so an unpinned major
+      # bump could silently change routing/inhibition semantics.
+      version: 88.6.2
+  values:
+    alertmanager:
+      alertmanagerSpec:
+        # Mounts the ExternalSecret-synced Secret at
+        # /etc/alertmanager/secrets/alerts-webhook-secret/ so the receiver
+        # auth value never appears in these values (repo is public).
+        secrets:
+          - alerts-webhook-secret
+      # Helm merge semantics: the receivers and route.routes LISTS replace the
+      # chart defaults wholesale (so the default Watchdog null-route is
+      # re-declared here); `route` itself merges per-key, and every default
+      # key is re-declared below to keep the result explicit.
+      # global/inhibit_rules/templates still inherit chart defaults.
+      config:
+        route:
+          receiver: n8n-alerts
+          group_by: ["alertname", "namespace"]
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 12h
+          routes:
+            - receiver: "null"
+              matchers:
+                - alertname = "Watchdog"
+            # Decision 2026-09-01: phyt-system is another project's workload
+            # (orphaned from git; its stuck minio-bucket-setup job keeps
+            # KubeJobNotCompleted firing). Muted, not fixed — still visible
+            # in Prometheus. Delete this route when that project gets
+            # attention.
+            - receiver: "null"
+              matchers:
+                - namespace = "phyt-system"
+        receivers:
+          - name: "null"
+          - name: n8n-alerts
+            webhook_configs:
+              # Rides jobs-mcp's operator egress Service (ExternalName ->
+              # tailnet n8n) rather than running a second egress proxy for
+              # the same target. Accepted coupling: alert delivery depends
+              # on the jobs-mcp namespace existing — documented in
+              # docs/runbooks/alerts.md.
+              - url: http://n8n.jobs-mcp.svc.cluster.local:5678/webhook/alerts
+                send_resolved: true
+                http_config:
+                  authorization:
+                    type: Bearer
+                    credentials_file: /etc/alertmanager/secrets/alerts-webhook-secret/secret

@@ -27,20 +27,68 @@
         0
       ],
       "parameters": {
-        "jsCode": "// First node MUST verify the bearer credential (same discipline as the\n// jobs webhooks). The value lives in the LXC env (/etc/n8n/n8n.env) as\n// ALERTS_WEBHOOK_SECRET, never in this JSON. Alertmanager presents it as\n// an Authorization: Bearer header (credentials_file in its config).\nconst req = $input.first().json;\nconst secret = $env.ALERTS_WEBHOOK_SECRET;\nconst presented = (req.headers || {})['authorization'];\nif (!secret || presented !== `Bearer ${secret}`) {\n  return [{ json: { ok: false, error: 'unauthorized' } }];\n}\nconst body = req.body || {};\n// Alertmanager webhook payload: {status, groupLabels, alerts: [...]}.\nconst alerts = (body.alerts || []).map((a) => ({\n  status: a.status,\n  alertname: a.labels?.alertname ?? 'unknown',\n  namespace: a.labels?.namespace ?? '',\n  severity: a.labels?.severity ?? '',\n  summary: a.annotations?.summary ?? '',\n  since: a.startsAt ?? '',\n}));\nconst headline = alerts\n  .map((a) => `[${a.status.toUpperCase()}] ${a.alertname}${a.namespace ? ` (${a.namespace})` : ''}: ${a.summary}`)\n  .join('\\n');\n// Terminal channel seam: attach the notification node (email / Telegram /\n// push) AFTER this node in the UI, using {{$json.headline}} — then export\n// back to n8n/ per the README. Until then, executions in the n8n UI are the\n// delivery record.\nreturn [{ json: { ok: true, group_status: body.status ?? '', headline, alerts } }];"
+        "jsCode": "// First node MUST verify the bearer credential (same discipline as the\n// jobs webhooks). The value lives in the LXC env (/etc/n8n/n8n.env) as\n// ALERTS_WEBHOOK_SECRET, never in this JSON. Alertmanager presents it as\n// an Authorization: Bearer header (credentials_file in its config).\nconst req = $input.first().json;\nconst secret = $env.ALERTS_WEBHOOK_SECRET;\nconst presented = (req.headers || {})['authorization'];\nif (!secret || presented !== `Bearer ${secret}`) {\n  // ok:false routes to the 401 responder — Alertmanager must SEE the\n  // failure (2xx would be a silent black hole during rotation skew).\n  return [{ json: { ok: false, error: 'unauthorized' } }];\n}\nconst body = req.body || {};\n// Alertmanager webhook payload: {status, groupLabels, alerts: [...]}.\n// Caps bound attacker-controllable strings (any pod can reach the\n// unauthenticated Alertmanager API and inject alert text — see runbook).\nconst clip = (s, n) => String(s ?? '').replace(/[\\r\\n]+/g, ' ').slice(0, n);\nconst alerts = (body.alerts || []).slice(0, 20).map((a) => ({\n  status: clip(a.status, 16),\n  alertname: clip(a.labels?.alertname, 120) || 'unknown',\n  namespace: clip(a.labels?.namespace, 80),\n  severity: clip(a.labels?.severity, 24),\n  summary: clip(a.annotations?.summary, 500),\n  since: clip(a.startsAt, 40),\n}));\nconst headline = alerts\n  .map((a) => `[${a.status.toUpperCase()}] ${a.alertname}${a.namespace ? ` (${a.namespace})` : ''}: ${a.summary}`)\n  .join('\\n');\nreturn [{ json: { ok: true, group_status: clip(body.status, 16), headline, alerts } }];"
       }
     },
     {
-      "id": "respond-1",
-      "name": "Respond",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
+      "id": "if-1",
+      "name": "Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
       "position": [
         440,
         0
       ],
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "respond-200",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        -100
+      ],
+      "parameters": {
         "respondWith": "firstIncomingItem"
+      }
+    },
+    {
+      "id": "respond-401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": 401
+        }
       }
     }
   ],
@@ -60,7 +108,25 @@
       "main": [
         [
           {
-            "node": "Respond",
+            "node": "Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authorized?": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
             "type": "main",
             "index": 0
           }

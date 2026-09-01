@@ -1,10 +1,12 @@
 # Runbook: alert delivery (Alertmanager → n8n)
 
 Wired 2026-09-01. Rules live with their service (first set:
-`apps/base/jobs-mcp/prometheusrule.yaml`); delivery config lives in
-`apps/base/kube-prometheus-stack/release.yaml` values. Receiver decision
-(operator, 2026-09-01): n8n webhook — zero new infra, canonical workflow in
-`n8n/alerts-webhook.json`, seeds the future notifications lane.
+`apps/base/jobs-mcp/prometheusrule.yaml`); delivery config is PROD-ONLY in
+`apps/homelab-prod/kube-prometheus-stack-values.yaml` + the ExternalSecret
+beside it (the kube-prometheus-stack base also ships to apps/development —
+only the k3s component-monitor disables belong in the base). Receiver
+decision (operator, 2026-09-01): n8n webhook — zero new infra, canonical
+workflow in `n8n/alerts-webhook.json`, seeds the future notifications lane.
 
 ## Path
 
@@ -16,12 +18,41 @@ PrometheusRule (release: kube-prometheus-stack label, required)
     depends on the jobs-mcp namespace; if jobs-mcp ever moves, give
     kube-prometheus-stack its own ExternalName egress Service)
   → n8n workflow `alerts-webhook` (verifies Authorization: Bearer against
-    $env.ALERTS_WEBHOOK_SECRET; formats a headline)
-  → terminal channel: attach a notification node after "Verify And Format"
-    in the n8n UI (email/Telegram/push — needs a credential only the
-    operator can add), then export back to n8n/ per its README.
-    Until then, n8n execution history is the delivery record.
+    $env.ALERTS_WEBHOOK_SECRET; formats a headline; 200 on the authorized
+    branch, 401 otherwise — fail-closed-and-loud, see "Failure visibility")
+  → terminal channel: attach a notification node after "Respond 200" on the
+    AUTHORIZED branch in the n8n UI (email/Telegram/push — needs a
+    credential only the operator can add), then export back to n8n/ per its
+    README. Never attach it before the Authorized? gate: the unauthorized
+    branch must stay a dead end. Until then, n8n execution history is the
+    delivery record.
 ```
+
+## Failure visibility + accepted risks (decided, not accidental)
+
+- **Bad/rotating bearer → 401, visible.** Alertmanager treats non-2xx as a
+  failed notification: it logs and increments
+  `alertmanager_notifications_failed_total` (4xx is not retried; 429/5xx
+  are). A 200-on-unauthorized here would be a silent black hole — every
+  rotation has a skew window (ExternalSecret refresh ≤1h behind the n8n env
+  update), and during it alerts would be "delivered" to nowhere.
+- **Alertmanager :9093 is unauthenticated ClusterIP** and the cluster has no
+  NetworkPolicies: any in-cluster workload (including the orphaned
+  phyt-system tenant) can forge alerts — which Alertmanager then forwards
+  wearing the real bearer — or silence real ones. Accepted for now
+  (single-operator cluster; in-cluster compromise is already severe), which
+  is why the workflow caps and sanitizes alert-derived strings. Named
+  follow-up: a NetworkPolicy restricting 9093 ingress to Prometheus +
+  operator pods.
+- **The bearer appears in n8n execution history** (webhook items persist
+  request headers; executions are deliberately kept as the delivery
+  record). Readable by any n8n UI/API identity, including the cluster-synced
+  jobs-mcp API key. Same trust domain as the jobs webhook secret — accepted.
+- **At real node-disk pressure expect a small alert pile-up** for the same
+  disk: `JobsPvcDiskFilling` (80%) plus the chart's
+  `KubePersistentVolumeFillingUp`, possibly duplicated by a stale
+  `namespace="default"` kubelet series (see STATUS pulse-check note). Noisy
+  but honest; don't be surprised.
 
 Muted routes (both re-declared in values because Helm replaces the default
 list): `Watchdog` (chart default), `namespace=phyt-system` (operator decision
