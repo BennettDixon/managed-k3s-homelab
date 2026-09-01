@@ -28,6 +28,13 @@ _Last updated: 2026-09-01_
 - **n8n:** `n8n` (LXC, compute site) — native npm under systemd, listening on its
   tailnet address only: `http://n8n:5678`. See `proxmox/n8n.md`,
   `mini/mcp-config.md`.
+- **jobs-mcp — LIVE (2026-09-01):** the task-queue MCP service on k3s at
+  `http://jobs-mcp/mcp` (bearer-gated, tailnet-only). SQLite queue on PVC,
+  deterministic n8n executors via the operator egress Service, artifacts
+  convention on the bulk NAS. First job proven end-to-end
+  (`enqueue → running → succeeded`, attempts:1, through the ACL-gated
+  egress). Spec `docs/specs/jobs-mcp.md`; runbook
+  `docs/runbooks/jobs-mcp.md`; source `services/jobs-mcp/`.
 - **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS),
   `edgepve` (edge — host tailscale is its management path; see
   `proxmox/edgepve.md`).
@@ -101,15 +108,24 @@ latency-sensitive jobs once jobs-mcp lands) — still no commitment.
   real migration (image refs, pull secrets, containerd trust, CA SANs,
   build scripts) with no current forcing event.
 
+## jobs-mcp v1 shipped (2026-08-31 → 2026-09-01)
+
+Spec (panel-designed, four sign-offs) → slice 1 (service, 70 tests, two
+adversarial review rounds — 28 findings fixed across them) → slice 2
+(manifests, terraform-managed secrets, operator egress with never-committed
+FQDN via Flux postBuild substitution) → first live job succeeded end-to-end.
+The one deliberate ACL change: `tag:k8s → n8n:5678` (documented here because
+ACLs are otherwise appliance-tier). PRs #2, #3.
+
 ## Next session starts with
 
-- ~~First n8n routine~~ **done 2026-08-27 (same day):** `smoke-heartbeat`
-  created/activated/executed entirely via the n8n REST API; canonical export
-  in `n8n/smoke-heartbeat.json`.
-- ~~The jobs MCP spec~~ **APPROVED 2026-08-31** (`docs/specs/jobs-mcp.md`) —
-  next: slice 1, `services/jobs-mcp/` (server, dispatcher, SQLite, tests; no
-  manifests). Operator prerequisites in spec §12 are needed before slice 2.
-- Groundwork after that: k8s storage classes + site labels (build order item 1).
+- **knowledge-mcp spec** (design-first, same panel treatment): the vector
+  store decision is pre-staged in Parked; corpus #1 is the homelab notes.
+- Groundwork alternative: k8s storage classes + site labels (build order
+  item 1) — jobs-mcp used default local-path, fine for its spec, but the
+  NVMe/NAS class split is still undone.
+- Wire alertmanager for the jobs-mcp starter alerts (`jobs_bridge_up`,
+  PVC usage) now that metrics flow.
 - Optional workbench wiring: n8n-mcp on the mini per `mini/mcp-config.md`.
 
 ## Decisions log
