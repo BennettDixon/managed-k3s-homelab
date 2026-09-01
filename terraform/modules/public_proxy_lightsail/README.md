@@ -75,3 +75,18 @@ certbot --nginx
 ```bash
 echo "0 0,12 * * * root /opt/certbot/bin/python -c 'import random; import time; time.sleep(random.random() * 3600)' && sudo certbot renew -q" | sudo tee -a /etc/crontab > /dev/null
 ```
+
+## Ops notes
+- `tailscaled` and `nginx` both run as systemd services with restart-on-failure
+  (provisioned by `user_data.sh.tftpl`), so a daemon crash self-heals. Check with
+  `systemctl status tailscaled nginx`.
+- `tailscaled` uses the default kernel TUN networking. Do not switch it to
+  `--tun=userspace-networking`: nginx dials tailnet upstreams directly
+  (`proxy_pass` / `stream`), which userspace mode cannot route.
+- `user_data` only runs at the instance's first boot, and **changing it forces
+  instance replacement**. The static IP survives (it is a separate resource and
+  gets re-attached), but replacement loses the certbot certificates and any
+  manual nginx edits — re-run the certbot steps above afterwards. The
+  `tailscale_auth_key` must still be valid at rebuild time, and the new tailnet
+  device may join under a different name (rename it in the Tailscale admin
+  console if your ssh aliases depend on it).

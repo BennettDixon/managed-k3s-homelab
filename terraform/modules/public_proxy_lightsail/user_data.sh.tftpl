@@ -1,0 +1,173 @@
+#!/bin/bash
+# First-boot provisioning for the Lightsail public proxy, rendered by
+# Terraform templatefile() (the tailscale auth key is injected by Terraform;
+# everything else is plain shell). Runs once as root via cloud-init; output
+# lands in /var/log/cloud-init-output.log.
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+
+# Wait for apt/dpkg locks instead of failing (unattended-upgrades usually
+# holds them during first boot)
+APT="apt-get -y -o DPkg::Lock::Timeout=300"
+
+$APT update
+
+# Install Tailscale
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
+  | gpg --yes --dearmor -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
+  | tee /etc/apt/sources.list.d/tailscale.list
+$APT update
+$APT install tailscale nginx python3 python3-venv libaugeas0
+
+# Setup virtual environment for certbot
+python3 -m venv /opt/certbot/
+# Install Upgrade pip
+/opt/certbot/bin/pip install --upgrade pip
+# Install certbot
+/opt/certbot/bin/pip install certbot certbot-nginx
+# Link certbot to /usr/bin
+ln -sf /opt/certbot/bin/certbot /usr/bin/certbot
+
+# Run tailscaled under systemd instead of launching it by hand: the deb ships
+# tailscaled.service with Restart=on-failure, so a daemon crash self-heals
+# instead of taking the proxy down. Kernel TUN networking (the default) is
+# required here: nginx dials tailnet upstreams directly (proxy_pass/stream),
+# which --tun=userspace-networking cannot route.
+systemctl enable --now tailscaled
+
+# Join the tailnet once tailscaled is ready (skipped if already joined, so
+# re-running this script is a no-op)
+if ! tailscale status >/dev/null 2>&1; then
+  for _ in $(seq 1 30); do
+    if tailscale up --authkey="${tailscale_auth_key}" --ssh; then
+      break
+    fi
+    sleep 2
+  done
+fi
+# Fail provisioning loudly if we never joined; nginx below depends on
+# tailnet DNS and routing
+tailscale status >/dev/null
+
+# Nginx site config ('NGINXCONF' is quoted so the $vars below stay literal
+# nginx variables)
+cat <<'NGINXCONF' >/etc/nginx/sites-available/default
+# Root domain
+server {
+    server_name www.bennettdixon.dev bennettdixon.dev;
+
+    location / {
+        proxy_pass http://personal-site-personal-site;  # Tailscale IP for personal site
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Astro requires this since we terminate SSL
+        proxy_set_header Origin http://$host;
+    }
+}
+
+# Redirect www to root
+server {
+    server_name www.bennettdixon.dev;
+    # DELETE listen 80 for listen 443 once configured w/ ssl
+    listen 80;
+
+    # Add this manually or via certbot when configured
+    # listen 443 ssl;
+    # ssl_certificate /etc/letsencrypt/live/bennettdixon.dev/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/bennettdixon.dev/privkey.pem;
+    # include /etc/letsencrypt/options-ssl-nginx.conf;
+    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    return 301 https://bennettdixon.dev$request_uri;
+}
+
+# FarmSim HTTP server (redirect to HTTPS)
+server {
+    listen 80;
+    server_name farmsim.bennettdixon.dev;
+    return 301 https://$server_name$request_uri;
+}
+
+# FarmSim HTTPS server with SSL termination
+server {
+    listen 443 ssl;
+    server_name farmsim.bennettdixon.dev;
+
+    # SSL certificate configuration (configure with certbot)
+    # UNCOMMENT THIS BLOCK AFTER OBTAINING SSL CERTIFICATES
+    # sudo certbot --nginx -d farmsim.bennettdixon.dev
+    #ssl_certificate /etc/letsencrypt/live/farmsim.bennettdixon.dev/fullchain.pem;
+    #ssl_certificate_key /etc/letsencrypt/live/farmsim.bennettdixon.dev/privkey.pem;
+    #include /etc/letsencrypt/options-ssl-nginx.conf;
+    #ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    location / {
+        # Proxy to FarmSim backend over HTTP (internal Tailscale network)
+        proxy_pass http://farmsim;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin http://$host;
+
+        # WebSocket support (in case FarmSim uses WebSockets)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
+NGINXCONF
+
+# Add stream configuration for TCP proxying (game port)
+# Check if stream block already exists to avoid duplicates
+if ! grep -q "stream {" /etc/nginx/nginx.conf; then
+cat <<'STREAMBLOCK' >>/etc/nginx/nginx.conf
+
+# Stream block for TCP/UDP proxying
+stream {
+    # FarmSim game server TCP proxy
+    server {
+        listen 10823;
+        proxy_pass farmsim:10823;
+        proxy_timeout 1s;
+        proxy_responses 1;
+    }
+}
+STREAMBLOCK
+fi
+
+# Nginx upstreams are tailnet MagicDNS names, so nginx can only load its
+# config while tailscale is up: order it after tailscaled and retry on
+# failure (the stock unit has no Restart=) so it self-heals too.
+mkdir -p /etc/systemd/system/nginx.service.d
+cat <<'NGINXOVERRIDE' >/etc/systemd/system/nginx.service.d/override.conf
+[Unit]
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+NGINXOVERRIDE
+systemctl daemon-reload
+
+systemctl enable nginx
+nginx -t
+systemctl restart nginx
+
+# BE SURE TO CONFIGURE THE SSL CERTS WITH CERTBOT VIA SSH
+# ONCE SETUP OF VM IS COMPLETE
+# (SEE README FOR INSTRUCTIONS)
