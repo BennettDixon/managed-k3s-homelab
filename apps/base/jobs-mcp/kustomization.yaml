@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jobs-mcp
+resources:
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml
+  - egress-n8n.yaml
+  - servicemonitor.yaml
+  # ExternalSecrets live in this base, NOT apps/secrets/: the secrets path is
+  # shared with the development cluster (which has no jobs-mcp namespace), and
+  # keeping them here scopes both the resources and any missing-SM-entry
+  # failure to the apps stage of the prod chain only.
+  - jobs-mcp-bearer-token.yaml
+  - jobs-mcp-webhook-secret.yaml
+  - jobs-mcp-n8n-api-key.yaml
+  - jobs-mcp-registry-harbor-docker-login.yaml
+configMapGenerator:
+  # Hash-suffixed: a registry change rolls the Deployment (spec §4).
+  - name: jobs-mcp-registry
+    files:
+      - registry.yaml

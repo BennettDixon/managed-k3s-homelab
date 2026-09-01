@@ -154,3 +154,34 @@ variable "public_proxy_certificate_arn" {
   default = "not-set"
 }
 
+
+# jobs-mcp secret values (never committed; set in terraform.tfvars)
+variable "jobs_mcp_bearer_token" {
+  description = "jobs-mcp MCP bearer token"
+  type        = string
+  sensitive   = true
+}
+
+variable "jobs_mcp_webhook_secret" {
+  description = "jobs-mcp -> n8n webhook shared secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "jobs_mcp_n8n_api_key" {
+  description = "n8n API key dedicated to jobs-mcp"
+  type        = string
+  sensitive   = true
+}
+
+variable "jobs_harbor_docker_pull_username" {
+  description = "Full Harbor robot name for jobs project pulls (robot$jobs+...)"
+  type        = string
+  sensitive   = true
+}
+
+variable "jobs_harbor_docker_pull_password" {
+  description = "Harbor robot secret for jobs project pulls"
+  type        = string
+  sensitive   = true
+}

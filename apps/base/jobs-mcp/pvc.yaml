@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jobs-mcp-data
+  namespace: jobs-mcp
+spec:
+  # Single-site by design: job records do not survive loss of the node —
+  # re-enqueue is the recovery model; artifacts on the NAS persist (spec §1).
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

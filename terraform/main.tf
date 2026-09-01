@@ -141,3 +141,43 @@ resource "aws_iam_user_policy_attachment" "agent_crawler_s3_dev_user_access" {
   policy_arn = module.agent_crawler_s3_dev_access.policy_arn
 }
 
+
+# jobs-mcp secrets (spec: docs/specs/jobs-mcp.md §12; consumed by the
+# ExternalSecrets in apps/base/jobs-mcp/)
+module "jobs_mcp_bearer_token_secret" {
+  source       = "./modules/secrets_manager"
+  secret_name  = "k3s_jobs_mcp_bearer_token"
+  description  = "jobs-mcp MCP bearer token (single v1 caller credential)"
+  secret_value = jsonencode({
+    token = var.jobs_mcp_bearer_token
+  })
+}
+
+module "jobs_mcp_webhook_secret" {
+  source       = "./modules/secrets_manager"
+  secret_name  = "k3s_jobs_mcp_webhook_secret"
+  description  = "Shared secret on jobs-mcp -> n8n webhook calls; same value must live in the n8n LXC env as JOBS_WEBHOOK_SECRET"
+  secret_value = jsonencode({
+    secret = var.jobs_mcp_webhook_secret
+  })
+}
+
+module "jobs_mcp_n8n_api_key_secret" {
+  source       = "./modules/secrets_manager"
+  secret_name  = "k3s_jobs_mcp_n8n_api_key"
+  description  = "Dedicated n8n API key for jobs-mcp startup checks (n8n UI key labeled jobs-mcp)"
+  secret_value = jsonencode({
+    api_key = var.jobs_mcp_n8n_api_key
+  })
+}
+
+module "jobs_harbor_docker_pull_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_harbor_docker_pull_jobs"
+  description = "Pull-only Harbor robot for the jobs project (jobs-mcp images)"
+  secret_value = jsonencode({
+    username = var.jobs_harbor_docker_pull_username
+    password = var.jobs_harbor_docker_pull_password
+    registry = var.harbor_registry_domain
+  })
+}

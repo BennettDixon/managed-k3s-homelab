@@ -1,0 +1,32 @@
+# Dedicated Harbor robot for pulling the jobs-mcp image (personal-site
+# pattern; robot scoped to pull on the `jobs` project only).
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: jobs-mcp-registry-harbor-docker-login
+  namespace: jobs-mcp
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: jobs-mcp-registry-harbor-docker-login
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: '{"auths":{"{{ .registryHost }}":{"username":"{{ .username }}","password":"{{ .password }}","auth":"{{ printf "%s:%s" .username .password | b64enc }}"}}}'
+  data:
+    - secretKey: registryHost
+      remoteRef:
+        key: k3s_harbor_docker_pull_jobs
+        property: registry
+    - secretKey: username
+      remoteRef:
+        key: k3s_harbor_docker_pull_jobs
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: k3s_harbor_docker_pull_jobs
+        property: password

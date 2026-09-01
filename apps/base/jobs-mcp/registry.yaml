@@ -1,0 +1,15 @@
+# Task-type registry (spec §4). Repo-owned; shipped via configMapGenerator so
+# any change here hash-rolls the Recreate Deployment — a merged registry PR
+# takes effect declaratively. Governance: a new task_type is one PR carrying
+# this entry AND the canonical workflow export in n8n/.
+task_types:
+  smoke-heartbeat:
+    executor: n8n
+    webhook_path: jobs/smoke-heartbeat
+    timeout_s: 300
+    max_attempts: 3
+    idempotent: true
+    frontend_allowed: false
+    payload_schema:
+      type: object
+      additionalProperties: false

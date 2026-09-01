@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: n8n
+  namespace: jobs-mcp
+  annotations:
+    # The tailscale operator rewires this ExternalName to an egress proxy
+    # reaching the tailnet n8n node. The ts.net FQDN is NEVER committed
+    # (decision 2026-08-30): Flux substitutes it from the on-cluster
+    # `cluster-vars` secret in flux-system (created once, out of band —
+    # see docs/runbooks/jobs-mcp.md).
+    tailscale.com/tailnet-fqdn: "${N8N_TAILNET_FQDN}"
+    # IfNotPresent: Flux creates the Service once, then leaves it alone — the
+    # tailscale operator owns spec.externalName after creation and plain SSA
+    # would revert it every reconcile. (NOT "Ignore", which means never apply
+    # the resource at all.) To change annotations here: delete the Service and
+    # let Flux recreate it.
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
+spec:
+  type: ExternalName
+  externalName: placeholder.jobs-mcp.svc.cluster.local

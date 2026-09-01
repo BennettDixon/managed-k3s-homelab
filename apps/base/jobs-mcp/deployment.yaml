@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jobs-mcp
+  namespace: jobs-mcp
+spec:
+  # replicas 1 + Recreate + the RWO PVC make a second SQLite writer
+  # structurally impossible across upgrades and rollbacks (spec §8).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jobs-mcp
+  template:
+    metadata:
+      labels:
+        app: jobs-mcp
+    spec:
+      imagePullSecrets:
+        - name: jobs-mcp-registry-harbor-docker-login
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: jobs-mcp
+          image: harbor.internal/jobs/jobs-mcp:0.1.0
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PORT
+              value: "8080"
+            # DB_PATH and REGISTRY_PATH are deliberately NOT set: the image's
+            # compiled defaults (/data/jobs.db, /config/registry.yaml) match
+            # the volumeMounts below, and pinning them here would be a second
+            # source of truth for image-internal paths.
+            # ExternalName egress Service in this namespace (operator-rewired).
+            - name: N8N_BASE_URL
+              value: http://n8n.jobs-mcp.svc.cluster.local:5678
+            - name: DISPATCH_CONCURRENCY
+              value: "2"
+            - name: MAX_BUDGET_CAP_USD
+              value: "25"
+            - name: JOBS_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: jobs-mcp-bearer-token
+                  key: token
+            - name: JOBS_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: jobs-mcp-webhook-secret
+                  key: secret
+            - name: N8N_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jobs-mcp-n8n-api-key
+                  key: api_key
+                  # The key feeds a non-fatal startup diagnostic only (spec
+                  # §6); it must never gate the pod.
+                  optional: true
+          # Liveness never writes (a full PVC must degrade, not crash-loop);
+          # readiness does the DB write-ping. n8n reachability is in neither
+          # (spec §8) — the queue accepts enqueues while n8n is down.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: registry
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: jobs-mcp-data
+        - name: registry
+          configMap:
+            name: jobs-mcp-registry

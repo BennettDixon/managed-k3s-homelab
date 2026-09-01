@@ -1,0 +1,20 @@
+# v1 auth (spec §2): one static bearer token for all callers, rotated in AWS
+# Secrets Manager. Per-caller tokens arrive with NanoClaw onboarding.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: jobs-mcp-bearer-token
+  namespace: jobs-mcp
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: jobs-mcp-bearer-token
+    creationPolicy: Owner
+  data:
+    - secretKey: token
+      remoteRef:
+        key: k3s_jobs_mcp_bearer_token
+        property: token
