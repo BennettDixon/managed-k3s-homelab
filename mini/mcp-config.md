@@ -32,10 +32,26 @@ Add to the workbench MCP config (e.g. `~/.claude.json` `mcpServers`, or
 after first-run setup, then export it in the workbench shell profile:
 
 ```bash
-# ~/.zshrc on the workbench — value from the n8n UI, never committed
+# ~/.zshenv on the workbench — value from the n8n UI, never committed
 export N8N_API_KEY="..."
 ```
 
 Claude Code expands `${N8N_API_KEY}` from the environment at MCP startup, so
 rotating the key is: generate new key in UI → update the env var → restart
 the session. Nothing in the repo changes.
+
+## jobs-mcp
+
+The task queue itself (live since 2026-09-01) — registered on both workbench
+accounts (`bennett` and `agent`) as a streamable-HTTP server:
+
+```bash
+claude mcp add --transport http --scope user jobs-mcp http://jobs-mcp/mcp \
+  --header 'Authorization: Bearer ${JOBS_MCP_TOKEN}'
+```
+
+`JOBS_MCP_TOKEN` lives in each account's `~/.zshenv` (same value as the
+`jobs_mcp_bearer_token` terraform var; rotate in tfvars → targeted apply →
+update the env). Tools: `enqueue` (budget_cap REQUIRED, 0 = no model spend),
+`status`, `artifacts`, `cancel` (queued jobs only). Contract:
+`docs/specs/jobs-mcp.md` §3.
