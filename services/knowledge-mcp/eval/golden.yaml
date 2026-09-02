@@ -1,0 +1,69 @@
+# Golden retrieval queries (spec §5): authored from real operator questions,
+# never from index behavior. Every "search missed X" fix adds its query here.
+# expect: doc_ids where any top-5 hit counts as recall; expect_miss: true
+# marks a known lexical blind spot — kept on the scoreboard, not hidden. If a
+# miss starts hitting (vectors landing, doc edits), the run reports it as an
+# improvement; promote it to a regular entry.
+queries:
+  - q: "bridge down checklist"
+    expect: ["homelab-notes:docs/runbooks/jobs-mcp.md"]
+  - q: "rotate the jobs webhook secret"
+    expect: ["homelab-notes:docs/runbooks/jobs-mcp.md"]
+  - q: "MERGE GATE order load-bearing"
+    expect: ["homelab-notes:docs/runbooks/jobs-mcp.md"]
+  - q: "jobs_bridge_up"
+    expect: ["homelab-notes:docs/runbooks/jobs-mcp.md", "homelab-notes:docs/specs/jobs-mcp.md"]
+  - q: "which VLAN is the servers VLAN at the edge"
+    expect: ["homelab-notes:proxmox/edgepve.md"]
+  - q: "VLAN-aware guest trunk 10G"
+    expect: ["homelab-notes:proxmox/edgepve.md"]
+  - q: "TUN passthrough unprivileged LXC"
+    expect: ["homelab-notes:proxmox/tailscale-gw.md"]
+  - q: "advertise exit node and subnet routes"
+    expect: ["homelab-notes:proxmox/tailscale-gw.md"]
+  - q: "persist tailscaled across reboots TrueNAS"
+    expect: ["homelab-notes:proxmox/nas-vm.md"]
+  - q: "idempotency key same envelope replay"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+  - q: "budget_cap missing error no default"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+  - q: "artifacts directory layout bulk NAS"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+  - q: "n8n API key blast radius credential store"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+  - q: "worker smoke test headless claude"
+    # STATUS's Standing-infrastructure section describes the worker smoke lane
+    # end-to-end and answers this query as well as worker.md does.
+    expect: ["homelab-notes:proxmox/worker.md", "homelab-notes:docs/STATUS.md"]
+  - q: "worker smoke test"
+    expect: ["homelab-notes:proxmox/worker.md"]
+  - q: "n8n binds only its tailnet address"
+    expect: ["homelab-notes:proxmox/n8n.md"]
+  - q: "cluster-vars secret flux-system"
+    expect: ["homelab-notes:docs/runbooks/jobs-mcp.md", "homelab-notes:docs/specs/jobs-mcp.md"]
+  - q: "orphan sweep running rows at boot"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+  - q: "node disk 73"
+    expect: ["homelab-notes:docs/STATUS.md"]
+  - q: "recreate strategy single writer PVC"
+    # Both specs document the Recreate/RWO single-writer pattern; either is a
+    # correct answer (the knowledge-mcp spec joined the corpus 2026-09-02).
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md", "homelab-notes:docs/specs/knowledge-mcp.md"]
+  - q: "Recreate RWO two writers"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+  - q: "make tailscale start automatically when the NAS boots"
+    expect: ["homelab-notes:proxmox/nas-vm.md"]
+  - q: "what still works when the parents house loses internet"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+  # Promoted 2026-09-02: both were expect_miss paraphrases until the
+  # knowledge-mcp spec joined the corpus and shifted BM25 statistics — the
+  # eval's own promote-on-improvement rule applied.
+  - q: "how do I get console access when I break the network"
+    expect: ["homelab-notes:proxmox/edgepve.md"]
+  - q: "what happens to my services when the power flickers"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+  # Known lexical blind spot — vocabulary-gap paraphrase (spec §5): "cost"
+  # never co-occurs with budget_cap language. First S1-vector test case.
+  - q: "how much does it cost to run a job"
+    expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
+    expect_miss: true

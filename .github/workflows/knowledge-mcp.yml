@@ -1,0 +1,39 @@
+# First working CI job in this repo (operator sign-off 2026-09-02, spec §5):
+# typecheck + unit tests + the golden retrieval eval for knowledge-mcp. The
+# eval reads the repo's docs/ + proxmox/ from this same checkout, so retrieval
+# regressions and doc changes that break golden queries surface on the PR.
+name: knowledge-mcp
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/knowledge-mcp/**"
+      - "docs/**/*.md"
+      - "proxmox/**/*.md"
+      - ".github/workflows/knowledge-mcp.yml"
+  pull_request:
+    paths:
+      - "services/knowledge-mcp/**"
+      - "docs/**/*.md"
+      - "proxmox/**/*.md"
+      - ".github/workflows/knowledge-mcp.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/knowledge-mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # node 22, not 24: better-sqlite3@11 ships no Node-24 prebuilt
+          # (same constraint as the Dockerfile).
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/knowledge-mcp/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run eval
