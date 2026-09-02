@@ -283,12 +283,11 @@ and the one remaining gate step are the operator's:
 
 - **knowledge-mcp v1 is LIVE end to end** (#9 + #11, 2026-09-02): serving at
   `http://knowledge-mcp/mcp`, registered on the workbench, scheduled
-  freshness proven through jobs-mcp. Operator decisions still open: keep or
-  strike the fourth alert (`KnowledgeIndexNeverBuilt`); where the nightly
-  scheduler's credential lives (runbook "Scheduled freshness"). Until then
-  reingest is manual — `enqueue knowledge-reingest` from any jobs-mcp
-  client, or the operator's own `reingest` — and `KnowledgeIndexStale`
-  fires 48 h after the last one.
+  freshness proven through jobs-mcp, and the nightly direct schedule
+  (`knowledge-reingest-direct`, decision above) armed on n8n. Operator
+  decision still open: keep or strike the fourth alert
+  (`KnowledgeIndexNeverBuilt`). Per-caller jobs-mcp tokens (the NanoClaw
+  retrofit) are what re-arm the queue-shaped nightly.
 - **Next build-order item: the model gateway spec** (item 4). Language is
   an explicit sign-off question (Python vs TS-for-parity, two-toolchain cost
   stated); lanes: subscription via headless Claude on workers, metered API
@@ -327,13 +326,14 @@ and the one remaining gate step are the operator's:
 - 2026-09-02: homelab-notes stays operator-only permanently; NanoClaw will
   be served a deliberately curated corpus (e.g. homelab-faq) instead of the
   working notes (conversational-exfiltration fence).
-- 2026-09-02: the nightly `knowledge-reingest` trigger is imported but stays
-  INACTIVE until the operator decides where the scheduler's credential
-  lives — the jobs-mcp bearer in the n8n env (whole v1 tool surface to every
-  workflow author), a direct `reingest` schedule with the reingest-bot token
-  n8n already holds (zero new secrets, loses the job row — spec §6
-  deviation), or per-caller jobs-mcp tokens later. Reingest is manual until
-  then; `KnowledgeIndexStale` keeps that honest.
+- 2026-09-02: nightly knowledge freshness runs as a DIRECT `reingest`
+  schedule (n8n Schedule trigger → knowledge-mcp, with the scoped
+  reingest-bot token n8n already holds) — zero new secrets, no job row;
+  spec §6 deviation by sign-off (SIGN-OFF 5). The queue-shaped scheduler
+  stays exported and INACTIVE until jobs-mcp has per-caller tokens, when a
+  caller allowed only `enqueue knowledge-reingest` takes over. The v1 jobs
+  bearer never enters the n8n env: it would hand every workflow author the
+  whole jobs-mcp surface.
 - 2026-09-02: shared-base HelmRelease values that are prod-only (receiver
   config, secret mounts) live as apps/homelab-prod PATCHES, not in the base
   — apps/development consumes the same bases (learned from the alerts
