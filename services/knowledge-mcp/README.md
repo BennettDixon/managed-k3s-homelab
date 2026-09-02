@@ -1,5 +1,12 @@
 # knowledge-mcp
 
+> **Alpha, and mostly AI-written.** This service was spec'd, implemented, and
+> adversarially reviewed by Claude agent sessions under human direction, and
+> runs here as a personal-infrastructure testbed while its operator kicks the
+> tires. Expect sharp edges; interfaces and internals may change without
+> notice. A polished, properly packaged open-source version will likely be a
+> later rewrite — don't build on this one.
+
 `knowledge-mcp` is the retrieval MCP service of the personal cloud. It answers
 `search` and `fetch` over registered corpora and keeps them current via
 `ingest`/`reingest`, backed by one SQLite+FTS5 file on a PVC. Corpus #1 is
