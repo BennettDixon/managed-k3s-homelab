@@ -153,12 +153,65 @@ secret shows up as `ImagePullBackOff` on the next deploy, never mid-run.
 2. `E_UNSUPPORTED: tree listing matched no documents while the corpus has
    live docs` = the circuit breaker: registry prefixes and the repo tree
    disagree (a renamed directory). Fix the registry; nothing was tombstoned.
-3. Nothing ran at all: the jobs-mcp / n8n side (slice 3 section, below). A
-   manual operator `reingest` is always safe — idempotent, sha-keyed.
+3. Nothing ran at all: `status(id)` of the last `knowledge-reingest` job
+   (`error.code`: `executor_http_error` = n8n/webhook unreachable,
+   `reingest_partial` = per-doc failures, `E_UNAUTHORIZED` in the message =
+   token skew between the SM map and the n8n env), then the nightly trigger's
+   n8n execution history. A manual operator `reingest` is always safe —
+   idempotent, sha-keyed.
 4. GitHub unauthenticated API budget is 60 requests/hour per source IP; one
    reingest spends one tree call (raw fetches are not API calls). A 403 on
    the tree endpoint means something else on the same egress IP is spending
    that budget.
+
+## MERGE GATE (slice 3 — `knowledge-reingest` task_type)
+
+The registry change hash-rolls jobs-mcp (Recreate, seconds of downtime, no
+queue loss); jobs-mcp's non-fatal startup check then expects the workflow to
+exist and be active. Do NOT merge the task_type PR until ALL of:
+
+1. **Slice 2 is live**: `http://knowledge-mcp/readyz` → `{"ok":true}` and
+   the first operator reingest has succeeded (First run, above).
+2. **`n8n-reingest` token in BOTH places**: the SM map (slice 2's targeted
+   apply) AND the n8n LXC env as `KNOWLEDGE_REINGEST_TOKEN` in
+   `/etc/n8n/n8n.env`, followed by `systemctl restart n8n` (the alert
+   receiver and the jobs executors blink for ~10 s).
+3. **Workflow `knowledge-reingest` imported and ACTIVE** on n8n from
+   `n8n/knowledge-reingest.json` — import through the workbench
+   `N8N_API_KEY`; the cluster-synced jobs-mcp key is read-only.
+4. **Executor proven directly** (bypassing the queue, with the webhook
+   secret exported as `JOBS_WEBHOOK_SECRET`):
+   ```bash
+   curl -sS -X POST http://n8n:5678/webhook/jobs/knowledge-reingest \
+     -H "X-Jobs-Webhook-Secret: $JOBS_WEBHOOK_SECRET" -H 'Content-Type: application/json' \
+     -d '{"job_id":"manual-test","attempt":1,"payload":{"corpus":"homelab-notes"}}'
+   # expect {"ok":true,"result":{"corpus":"homelab-notes","source_ref":"<sha>",...},"artifacts":[],"spent_usd":0}
+   ```
+
+After merge, the end-to-end proof from any jobs-mcp client:
+`enqueue {task_type: "knowledge-reingest", payload: {corpus: "homelab-notes"},
+budget_cap: 0, artifacts_out: []}` → `status(id)` reaches `succeeded` with
+`result.source_ref` = the current `main` commit → knowledge-mcp
+`list_corpora` shows `index_as_of.commit` equal to it.
+
+## Scheduled freshness (nightly)
+
+`n8n/knowledge-reingest-nightly.json` enqueues one `knowledge-reingest` job
+per day at 03:30 instance time (day-keyed `idempotency_key`: a re-fired
+trigger is a replay, never a second run; the executor is idempotent anyway).
+It needs the jobs-mcp bearer in the n8n env as `JOBS_MCP_BEARER_TOKEN` — a
+SECOND HOLDER of the operator credential. That widens n8n's blast radius from
+"run executors" (it already holds `JOBS_WEBHOOK_SECRET`) to "enqueue any
+task_type up to `MAX_BUDGET_CAP_USD`", which is nil today (deterministic
+task types only, no gateway spend) but grows with agentic executors. The
+workflow is therefore imported INACTIVE; arming it (env var + restart +
+activate) is an explicit operator decision. The alternative that keeps the
+bearer in-cluster is a CronJob in the knowledge-mcp namespace reading the
+same SM key through an ExternalSecret. Either way, manual enqueue after
+doc-heavy merges is always available from any jobs-mcp client (the same
+envelope as above). Failure visibility: an unsuccessful enqueue errors the
+n8n execution; a reingest that keeps failing surfaces as
+`KnowledgeIndexStale` within two days.
 
 ## Rebuild from scratch (PVC lost)
 
