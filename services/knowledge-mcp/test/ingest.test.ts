@@ -71,13 +71,17 @@ describe("uri canonicalization (allowlist bypass hardening)", () => {
     await expect(ingestUri(store, config, corpus, smuggled, "operator")).rejects.toMatchObject({ code: "E_URI_FORBIDDEN" });
   });
 
-  it("rejects query strings, fragments, credentials, and empty segments", async () => {
+  it("rejects query strings, fragments, credentials, empty segments, and ALL percent-encoding", async () => {
     const { store } = testStore();
     for (const uri of [
       `${RAW_PREFIX}docs/a.md?x=1`,
       `${RAW_PREFIX}docs/a.md#frag`,
       `https://user:pw@raw.githubusercontent.com/BennettDixon/managed-k3s-homelab/main/docs/a.md`,
       `${RAW_PREFIX}docs//a.md`,
+      `${RAW_PREFIX}docs/%2e%2e/a.md`,
+      `${RAW_PREFIX}docs/%252e%252e/a.md`,
+      `${RAW_PREFIX}docs/%00a.md`,
+      `${RAW_PREFIX}docs/%zz.md`,
     ]) {
       await expect(ingestUri(store, config, corpus, uri, "operator")).rejects.toMatchObject({ code: "E_URI_FORBIDDEN" });
     }

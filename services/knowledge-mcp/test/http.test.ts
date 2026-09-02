@@ -59,7 +59,7 @@ const NANOCLAW = "nanoclaw-token-0123456789";
 const REINGEST = "reingest-token-0123456789";
 
 describe("probes (spec §8)", () => {
-  it("healthz and readyz are green on a healthy fixture, and readyz never writes", async () => {
+  it("healthz and readyz are green on a healthy fixture", async () => {
     const { app } = appFixture();
     const { base, close } = await serve(app);
     try {
@@ -155,6 +155,24 @@ describe("tool dispatch end-to-end (spec §3/§4)", () => {
       expect(denied.body.code).toBe("E_NOT_FOUND");
       const allowed = await mcpCall(base, NANOCLAW, "fetch", { doc_id: "public-faq:faq/nas.md" });
       expect(allowed.body.content).toContain("tailnet name");
+    } finally {
+      await close();
+    }
+  });
+
+  it("non-operator-authored content ships inside the untrusted envelope (spec §7)", async () => {
+    const { app } = appFixture();
+    const { base, close } = await serve(app);
+    try {
+      // public-faq is trust: curated — enveloped for EVERY caller class.
+      const fetched = await mcpCall(base, OPERATOR, "fetch", { doc_id: "public-faq:faq/nas.md" });
+      expect(fetched.body.content).toMatch(/^\[UNTRUSTED DOCUMENT CONTENT/);
+      expect(fetched.body.content).toMatch(/\[END UNTRUSTED DOCUMENT CONTENT\]$/);
+      const searched = await mcpCall(base, NANOCLAW, "search", { corpus: "public-faq", query: "NAS called" });
+      expect(searched.body.results[0].text).toMatch(/^\[UNTRUSTED DOCUMENT CONTENT/);
+      // operator-authored content is NOT wrapped.
+      const clean = await mcpCall(base, OPERATOR, "search", { corpus: "homelab-notes", query: "bridge down checklist" });
+      expect(clean.body.results[0].text).not.toContain("UNTRUSTED");
     } finally {
       await close();
     }

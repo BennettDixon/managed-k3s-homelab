@@ -119,20 +119,25 @@ sub-millisecond; no ANN index at this scale.
 
 Five tools. Errors are `{code, message, retryable}` (jobs-mcp §3 taxonomy
 style): `E_UNAUTHORIZED`, `E_FORBIDDEN` (tool not granted to caller class),
-`E_SCHEMA`, `E_CORPUS_UNKNOWN`, `E_NOT_FOUND` (also returned for corpora
-invisible to the caller — no existence oracle), `E_URI_FORBIDDEN` (allowlist
-miss, never retryable), `E_URI_UNREACHABLE` (retryable), `E_DOC_TOO_LARGE`,
-`E_QUERY_INVALID`, `E_NO_REBUILD_SOURCE`, `E_UNSUPPORTED`, `E_INTERNAL`.
+`E_SCHEMA`, `E_NOT_FOUND` (unknown AND invisible corpora/docs alike — one
+code, no existence oracle), `E_URI_FORBIDDEN` (allowlist miss, never
+retryable), `E_URI_UNREACHABLE` (retryable), `E_DOC_TOO_LARGE`,
+`E_QUERY_INVALID`, `E_UNSUPPORTED`, `E_INTERNAL`; `E_NO_REBUILD_SOURCE` is
+reserved for the S4 push shape (unreachable in v1 — the registry requires
+`rebuild_source` at parse time).
 
 - **`search(corpus, query, k?)`** — k default 6, cap 25. Returns
   `{corpus, retrieval: "bm25", index_as_of: {commit, ingested_at}, results:
-  [{chunk_id, doc_id, path, heading_path, text, score, rank, trust,
-  source_commit, neighbors: {prev, next}}]}`. Scores normalized positive
-  (FTS5 `bm25()` is negative-is-better — verified). Neighbors are **ids, not
-  text**: context spend stays visible to the caller. Response capped ~24 KiB
-  (measured: k=6 of real chunks ≈ 8–10 KB ≈ 2–3K tokens — the per-call context
-  cost a caller pays; stated here because MCP results land verbatim in agent
-  context).
+  [{chunk_id, doc_id, path, heading_path, text, truncated, score, rank,
+  trust, source_commit, neighbors: {prev, next}}]}`. `path` is the
+  repo-relative path (what a citation wants; the uri is one fetch away).
+  Scores normalized positive (FTS5 `bm25()` is negative-is-better —
+  verified). Neighbors are **ids, not text**: context spend stays visible to
+  the caller. Byte discipline is enforced, not promised: per-hit text is
+  snippet-capped at 2 KiB (`truncated: true`, full section one fetch away)
+  under a ~24 KiB total response budget (measured: k=6 of real chunks ≈
+  8–10 KB ≈ 2–3K tokens — the per-call context cost a caller pays; stated
+  because MCP results land verbatim in agent context).
 - **`fetch(doc_id, chunk_id?)`** — full normalized doc + metadata ≤ 64 KiB
   (jobs-mcp inline-result precedent); larger docs return metadata + chunk list
   and are fetched per-chunk. Corpus visibility re-checked server-side from the
@@ -186,7 +191,12 @@ Admission rules at parse time: `trust: untrusted` may never declare
 `visibility: frontend` (quarantine is structural — a poisoned clipping cannot
 reach a chat conduit by construction); every corpus requires `rebuild_source`;
 `frontend` visibility requires `trust != untrusted` **and** an explicit PR (a
-human reads what they promote). **[SIGN-OFF 3]** `homelab-notes` stays
+human reads what they promote); `allowed_uri_prefixes` must be https, end
+with `/` (else `…/docs` also allows `…/docsevil/`), be in canonical URL
+form, and — for git corpora — carry at least owner/repo/ref/dir path
+segments (a shallower prefix degenerates reingest's path mapping);
+`max_doc_bytes` is capped at 512 KiB, machine-enforcing §2's
+body-limit-≥-max_doc_bytes invariant. **[SIGN-OFF 3]** `homelab-notes` stays
 `visibility: operator` — NanoClaw is later served a deliberately *curated*
 corpus (e.g. `homelab-faq`, operator-authored) rather than the working notes,
 which accrete non-public operational detail and would hand a conversational
@@ -202,9 +212,18 @@ FQDNs or LAN IPs.
   mid-fence splits from `proxmox/edgepve.md`'s bare fence containing column-0
   `#` comment lines; fence-aware yields 62). Never split inside fenced blocks
   or tables. Sections >~1,200 tokens split at paragraph bounds with the
-  heading repeated; fragments <~200 chars merge forward. No overlap — chunks
-  carry `prev`/`next` ids instead. Breadcrumb (`title > heading path`)
-  prepended to indexed text and kept as metadata.
+  heading repeated; **heading-less** fragments <~200 chars merge forward
+  (headed sections always stand alone, however short — merging them forward
+  would hand their lines to the next section's provenance and lose the
+  heading boost; test-caught). No overlap — chunks carry `prev`/`next` ids
+  instead. Title and heading path are indexed as dedicated weighted FTS
+  columns (not text-prepended) and kept as metadata. **Chunker changes carry
+  a version stamp**: `CHUNKER_VERSION` is recorded in the DB; on mismatch at
+  boot the service re-chunks every live doc from stored content (per-doc
+  transactions, no network) before serving — otherwise search would serve
+  ingest-time rows while ids/neighbors/fetch re-derive with the new chunker,
+  a silent desync the sha short-circuit would preserve forever
+  (review-caught).
 - **Identity:** `doc_id = <corpus>:<repo-relative-path>` (human-legible,
   citable; renames tombstone + re-create — accepted non-goal). `chunk_id =
   <doc_id>#<heading-slug-path>[~N]`, **declared unstable across doc edits**
@@ -212,13 +231,14 @@ FQDNs or LAN IPs.
   `doc_id + heading_path + source_commit`.
 - **Query handling:** server-built MATCH strings, always — raw hyphenated
   input (`jobs-mcp`) *always* errors in FTS5 (verified: column-filter
-  parsing), so the server tokenizes, quotes every term, phrase-quotes
-  identifier-shaped terms (`_-./:$`), then two passes: all-terms AND, OR
-  fallback if empty. `unicode61`, no stemming — `jobs_bridge_up` tokenizes
-  symmetrically (verified) so identifier queries exact-match while partial
-  terms still hit. Ranking: `bm25(chunks, 8.0, 4.0, 1.0)` (title,
-  heading_path, body). Fusion for S1 pinned now: RRF k=60 behind an internal
-  `rank(query, candidates)` interface with one v1 implementation.
+  parsing), so the server tokenizes and **phrase-quotes every term** (which
+  both neutralizes FTS5 syntax and preserves identifier adjacency), then two
+  passes: all-terms AND, OR fallback if empty. `unicode61`, no stemming —
+  `jobs_bridge_up` tokenizes symmetrically (verified) so identifier queries
+  exact-match while partial terms still hit. Ranking: `bm25(chunks, 8.0,
+  4.0, 1.0)` (title, heading_path, body). Fusion for S1 pinned now: RRF k=60
+  behind an internal `rank(query, candidates)` interface with one v1
+  implementation.
 - **Eval:** `services/knowledge-mcp/eval/golden.yaml`, ~20 queries authored
   from operator questions (not from index behavior), including 2–3 known-hard
   paraphrases marked `expect: miss` so the lexical blind spot stays on a
@@ -232,13 +252,21 @@ FQDNs or LAN IPs.
 
 **Shape [SIGN-OFF 1]: inline, synchronous, in-pod fetch — pinned to registry
 prefixes.** One doc per call (MCP SDK client timeout is 60 s — verified;
-whole-corpus-in-one-call is forbidden by spec). Flow: auth → corpus visibility
-→ URI prefix allowlist (https only, redirects disabled, resolve-and-pin
-against rebinding, 10 s timeout, `max_doc_bytes` cap) → fetch → normalize
-(strip control chars and Unicode tag/invisible codepoints — hidden-instruction
-smuggling) → sha256 short-circuit (`"unchanged"`) → fence-aware chunk → one
-transaction (upsert doc + delete/insert chunks). Client abort mid-call is
-harmless: the transaction completes server-side; retry is a sha-keyed no-op.
+whole-corpus-in-one-call is forbidden by spec). Flow: auth → corpus
+visibility → URI canonicalization + prefix allowlist (https only; canonical
+URL form compared, so dot-segment tricks resolve before the check; queries,
+fragments, credentials, empty segments, and ALL percent-encoding rejected —
+repo `.md` paths never need encoding, and rejecting `%` closes the whole
+decode-count class; redirects disabled — any redirect is a hard error; host
+pinning is supplied by TLS certificate validation on the allowlisted name;
+10 s timeout; `max_doc_bytes` streamed cap) → fetch → normalize (strip
+control chars incl. bare CR and the C1 block, Unicode tag/invisible
+codepoints, and bidi overrides/isolates — hidden-instruction smuggling and
+Trojan-Source-class text) → sha256 short-circuit (`"unchanged"`, which still
+re-stamps registry trust so a reclassification PR applies immediately) →
+fence-aware chunk → one transaction (upsert doc + delete/insert chunks).
+Client abort mid-call is harmless: the transaction completes server-side;
+retry is a sha-keyed no-op.
 
 Why in-pod fetch rather than the alternatives the panel fought over: the RWO
 single-writer means every path terminates in this pod anyway; routing through
@@ -257,14 +285,20 @@ pod-network HTTPS today; verified live). Fallback if it fails: the `content`
 push shape unlocks (already declared in the contract).
 
 **Freshness:** `reingest(corpus)` walks `tree_source`, upserts changed docs,
-tombstones vanished ones — scheduled by a **`knowledge-reingest` jobs-mcp
-task_type** (deterministic, idempotent, `budget_cap: 0` — the invariant rides
-the existing envelope) whose n8n executor's *only* action is calling
-`reingest` with the scoped `n8n-reingest` token. The executor fetches
-nothing, parses nothing, holds no content; n8n compromise's knowledge blast
-radius is "can re-index the public repo" — nil. Nightly schedule + manual
-enqueue after doc-heavy merges. Registry entry + workflow export ship in one
-PR (n8n/ convention).
+tombstones vanished ones — with three review-hardened guards: a
+`truncated: true` tree listing is refused outright (a partial sweep must
+never tombstone); an empty match against a corpus with live docs
+circuit-breaks (registry/tree disagreement is a config problem, never
+grounds to wipe an index); and `index_as_of` freshness advances **only on a
+clean sweep** — per-doc failures leave `knowledge_index_age_seconds` growing,
+which is exactly the staleness alert's signal. Scheduled by a
+**`knowledge-reingest` jobs-mcp task_type** (deterministic, idempotent,
+`budget_cap: 0` — the invariant rides the existing envelope) whose n8n
+executor's *only* action is calling `reingest` with the scoped
+`n8n-reingest` token. The executor fetches nothing, parses nothing, holds no
+content; n8n compromise's knowledge blast radius is "can re-index the public
+repo" — nil. Nightly schedule + manual enqueue after doc-heavy merges.
+Registry entry + workflow export ship in one PR (n8n/ convention).
 
 **Budget discipline pre-gateway:** v1 spends $0 **by construction** — no
 embedding path exists, no third-party API key is minted, and the only
@@ -316,8 +350,11 @@ Clone of jobs-mcp §8 with one deliberate deviation:
 `GET /metrics` + ServiceMonitor labeled `release: kube-prometheus-stack` on a
 Service carrying the selected label (the twice-hit trap, §9 of the jobs spec).
 Metrics: `knowledge_search_total{corpus}`, `knowledge_search_duration_seconds`,
-`knowledge_ingest_total{corpus, result}`, `knowledge_ingest_errors_total`,
-`knowledge_docs{corpus}`, `knowledge_chunks{corpus}`, `knowledge_db_bytes`,
+`knowledge_ingest_total{corpus, result}`,
+`knowledge_ingest_errors_total{corpus, code}` (the labels make the §8
+write-health stance diagnosable; non-taxonomy failures — SQLITE_FULL above
+all — count as `E_INTERNAL`), `knowledge_docs{corpus}`,
+`knowledge_chunks{corpus}`, `knowledge_db_bytes`,
 `knowledge_index_age_seconds{corpus}`. PrometheusRule ships in the same PR:
 `KnowledgeMcpMetricsAbsent` (absent-guard — instant-vector alerts silently
 disarm when the target vanishes), `KnowledgeDbOversized`

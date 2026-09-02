@@ -35,4 +35,10 @@ describe("token map parsing (spec §2 — loud boot failures)", () => {
     expect(() => parseCallerTokens('{"Bad Id!": "0123456789abcdef"}')).toThrow(/identifier/);
     expect(() => parseCallerTokens("{}")).toThrow(/no callers/);
   });
+
+  it("rejects duplicate token values across caller ids (identity confusion)", () => {
+    expect(() =>
+      parseCallerTokens(JSON.stringify({ "caller-one": "same-token-0123456789", "caller-two": "same-token-0123456789" })),
+    ).toThrow(/duplicates/);
+  });
 });

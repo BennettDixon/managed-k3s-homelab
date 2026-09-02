@@ -23,6 +23,10 @@ try {
 }
 
 const store = new Store(db);
+// Chunker reconciliation before serving (spec §5): a chunker-version bump
+// re-chunks every live doc from stored content, so FTS rows, chunk ids, and
+// neighbors always agree with the running code.
+store.rechunkIfStale(log);
 const metrics = new Metrics(store, registry.corpora, () => {
   try {
     return statSync(config.dbPath).size;

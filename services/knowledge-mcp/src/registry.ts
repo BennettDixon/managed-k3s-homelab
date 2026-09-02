@@ -18,7 +18,9 @@ const corpusSchema = z
     trust: z.enum(["operator-authored", "curated", "untrusted"]).default("untrusted"),
     allowed_uri_prefixes: z.array(z.string().url()).min(1),
     tree_source: z.string().url().optional(),
-    max_doc_bytes: z.number().int().min(1024).max(1_048_576).default(262_144),
+    // Max is pinned BELOW the 512KiB express body limit (spec §2's invariant,
+    // machine-enforced here rather than by convention).
+    max_doc_bytes: z.number().int().min(1024).max(524_288).default(262_144),
   })
   .strict();
 
@@ -63,6 +65,16 @@ export function parseRegistry(text: string): Registry {
     }
     for (const p of c.allowed_uri_prefixes) {
       if (!p.startsWith("https://")) throw new Error(`corpus ${name}: allowed_uri_prefixes must be https (${p})`);
+      // Trailing slash: "…/docs" would also allow "…/docsevil/". Canonical
+      // form: the runtime compares canonicalized uris against these strings,
+      // so a prefix that changes under URL parsing is a silent widening.
+      // ≥4 path segments (owner/repo/ref/dir) for git corpora: a shallower
+      // prefix makes reingest's path mapping degenerate (review, 2026-09-02).
+      if (!p.endsWith("/")) throw new Error(`corpus ${name}: allowed_uri_prefixes must end with "/" (${p})`);
+      if (new URL(p).href !== p) throw new Error(`corpus ${name}: allowed_uri_prefixes must be in canonical URL form (${p})`);
+      if (c.rebuild_source === "git" && new URL(p).pathname.split("/").filter(Boolean).length < 4) {
+        throw new Error(`corpus ${name}: git prefix needs at least owner/repo/ref/dir path segments (${p})`);
+      }
     }
     if (c.tree_source && !c.tree_source.startsWith("https://")) {
       throw new Error(`corpus ${name}: tree_source must be https`);

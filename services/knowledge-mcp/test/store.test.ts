@@ -71,6 +71,25 @@ describe("store transactions (spec §1/§6)", () => {
     expect(store.chunkBody("c:docs/a.md", "c:docs/a.md#nope")).toBeNull();
   });
 
+  it("re-stamps trust on sha-unchanged docs (registry reclassification applies immediately)", () => {
+    const { store } = testStore();
+    const content = `# A\n\n## S\n\n${"x".repeat(300)}\n`;
+    seedDoc(store, "c:docs/a.md", "c", URI, content, "operator-authored");
+    seedDoc(store, "c:docs/a.md", "c", URI, content, "untrusted");
+    expect(store.getDoc("c:docs/a.md")!.trust).toBe("untrusted");
+  });
+
+  it("rechunkIfStale rebuilds chunks and stamps the version; second call is a no-op", () => {
+    const { store, db } = testStore();
+    seedDoc(store, "c:docs/a.md", "c", URI, `# A\n\n## One\n\n${"x".repeat(300)}\n`);
+    // Simulate a pre-versioning DB: wipe the stamp and corrupt the chunks.
+    db.prepare("DELETE FROM meta WHERE k = 'chunker_version'").run();
+    db.prepare("DELETE FROM chunks").run();
+    expect(store.rechunkIfStale()).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM chunks").get()).toEqual({ n: 1 });
+    expect(store.rechunkIfStale()).toBe(0);
+  });
+
   it("caps hit text at the snippet limit and flags truncation", () => {
     const { store } = testStore();
     const registryCorpus = { name: "c" } as never;

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
-import { chunkMarkdown } from "./chunker.js";
+import { chunkMarkdown, CHUNKER_VERSION } from "./chunker.js";
 import { buildMatch, normalizeScore } from "./query.js";
 import { KnowledgeError } from "./errors.js";
 import type { Corpus } from "./registry.js";
@@ -67,11 +67,46 @@ export class Store {
     );
   }
 
+  // Boot-time chunker reconciliation (spec §1/§5): if the code's
+  // CHUNKER_VERSION differs from the stamped one, re-chunk every live doc
+  // from stored content — per-doc transactions, no network — then stamp.
+  // Converts silent chunk-identity drift into a slightly slower boot.
+  rechunkIfStale(log: (line: Record<string, unknown>) => void = () => {}): number {
+    const row = this.db.prepare(`SELECT v FROM meta WHERE k = 'chunker_version'`).get() as { v: string } | undefined;
+    const stamped = row ? Number(row.v) : null;
+    if (stamped === CHUNKER_VERSION) return 0;
+    let rechunked = 0;
+    const docs = this.db.prepare(`SELECT doc_id FROM docs WHERE tombstoned_at IS NULL`).all() as Array<{ doc_id: string }>;
+    for (const { doc_id } of docs) {
+      const doc = this.getDoc(doc_id)!;
+      const { title, chunks } = chunkMarkdown(doc_id, doc.content);
+      const tx = this.db.transaction(() => {
+        this.deleteChunksStmt.run(doc_id);
+        for (const c of chunks) {
+          this.insertChunkStmt.run(doc.title ?? title ?? "", c.headingPath, c.body, doc_id, c.chunkIndex, doc.content_sha256);
+        }
+      });
+      tx();
+      rechunked++;
+    }
+    this.db
+      .prepare(`INSERT INTO meta (k, v) VALUES ('chunker_version', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`)
+      .run(String(CHUNKER_VERSION));
+    if (stamped !== null || rechunked > 0) log({ evt: "rechunk", from: stamped, to: CHUNKER_VERSION, docs: rechunked });
+    return rechunked;
+  }
+
   // One transaction per document (spec §6/§10): a power cut mid-ingest leaves
   // the previous version fully intact — doc row and chunks always agree.
   upsertDoc(row: Omit<DocRow, "tombstoned_at">): "indexed" | "unchanged" {
     const existing = this.getDoc(row.doc_id);
     if (existing && existing.content_sha256 === row.content_sha256 && existing.tombstoned_at === null) {
+      // Registry metadata still propagates to sha-unchanged docs: a trust
+      // reclassification PR must apply everywhere immediately, not only to
+      // docs whose content happens to change (review finding, 2026-09-02).
+      if (existing.trust !== row.trust) {
+        this.db.prepare(`UPDATE docs SET trust = ? WHERE doc_id = ?`).run(row.trust, row.doc_id);
+      }
       return "unchanged";
     }
     const { title, chunks } = chunkMarkdown(row.doc_id, row.content);
@@ -181,7 +216,9 @@ export class Store {
       hits.push({
         chunk_id: this.chunkIdOf(r.doc_id, r.chunk_index) ?? `${r.doc_id}#${r.chunk_index}`,
         doc_id: r.doc_id,
-        path: doc.uri,
+        // Repo-relative path (spec §3) — the uri is one fetch away; the path
+        // is what a citation wants.
+        path: doc.doc_id.slice(doc.corpus.length + 1),
         heading_path: r.heading_path,
         text,
         truncated,

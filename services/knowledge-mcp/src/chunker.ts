@@ -5,6 +5,13 @@
 // out of 74 when measured. ~15 lines of fence state beat a markdown library
 // dependency.
 
+// Bump on ANY behavior change to this module. Ingest stamps it into meta;
+// boot re-chunks every live doc on mismatch (store.rechunkAll) — otherwise
+// search would serve ingest-time FTS rows while chunk ids/neighbors/fetch
+// re-derive with the NEW chunker: silent desync, and the sha short-circuit
+// means it never heals on its own (review finding, 2026-09-02).
+export const CHUNKER_VERSION = 1;
+
 export interface Chunk {
   chunkId: string;
   chunkIndex: number;

@@ -36,9 +36,15 @@ export function parseCallerTokens(raw: string): Map<string, string> {
     throw new Error("KNOWLEDGE_CALLER_TOKENS must be a JSON object of caller_id -> token");
   }
   const map = new Map<string, string>();
+  const seen = new Set<string>();
   for (const [id, token] of Object.entries(parsed)) {
     if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(id)) throw new Error(`caller id ${JSON.stringify(id)} is not a valid identifier`);
     if (typeof token !== "string" || token.length < 16) throw new Error(`caller ${id}: token must be a string of at least 16 chars`);
+    // A duplicated value would make resolveCaller's full-iteration loop
+    // resolve to whichever id sorts last — silent identity confusion from a
+    // paste error (review, 2026-09-02).
+    if (seen.has(token)) throw new Error(`caller ${id}: token value duplicates another caller's`);
+    seen.add(token);
     map.set(id, token);
   }
   if (map.size === 0) throw new Error("KNOWLEDGE_CALLER_TOKENS contains no callers");

@@ -24,6 +24,23 @@ describe("registry admission (spec §4)", () => {
     expect(() => parseRegistry(bad)).toThrow(/unknown corpus/);
   });
 
+  it("rejects prefixes without trailing slash, non-canonical form, or shallow git paths", () => {
+    const noSlash = REGISTRY_YAML.replace("main/faq/", "main/faq");
+    expect(() => parseRegistry(noSlash)).toThrow(/end with/);
+    const nonCanonical = REGISTRY_YAML.replace("https://raw.githubusercontent.com/BennettDixon", "https://raw.githubusercontent.com/./BennettDixon");
+    expect(() => parseRegistry(nonCanonical)).toThrow();
+    const shallow = REGISTRY_YAML.replace(
+      "https://raw.githubusercontent.com/BennettDixon/managed-k3s-homelab/main/docs/",
+      "https://raw.githubusercontent.com/BennettDixon/",
+    );
+    expect(() => parseRegistry(shallow)).toThrow(/path segments/);
+  });
+
+  it("rejects max_doc_bytes above the body-limit invariant", () => {
+    const big = REGISTRY_YAML.replace("max_doc_bytes: 262144", "max_doc_bytes: 1048576");
+    expect(() => parseRegistry(big)).toThrow();
+  });
+
   it("rejects a corpus without rebuild_source", () => {
     const bad = REGISTRY_YAML.replace("    rebuild_source: git\n    visibility: operator\n", "    visibility: operator\n");
     expect(() => parseRegistry(bad)).toThrow();

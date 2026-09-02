@@ -66,16 +66,26 @@ export async function reingestCorpus(
   }
   if (treeRes.status !== 200) throw new KnowledgeError("E_URI_UNREACHABLE", `tree source returned ${treeRes.status}`, true);
 
-  let tree: { sha?: string; tree?: TreeEntry[] };
+  let tree: { sha?: string; truncated?: boolean; tree?: TreeEntry[] };
   try {
     tree = JSON.parse(treeRes.text);
   } catch {
     throw new KnowledgeError("E_URI_UNREACHABLE", "tree source returned unparseable JSON", true);
   }
+  // A truncated listing is a PARTIAL sweep: acting on it would tombstone
+  // every doc the listing omitted (review finding, 2026-09-02).
+  if (tree.truncated) throw new KnowledgeError("E_URI_UNREACHABLE", "tree listing truncated; refusing a partial sweep", true);
   const prefixes = pathPrefixes(corpus);
   const wanted = (tree.tree ?? [])
     .filter((e) => e.type === "blob" && e.path.endsWith(".md") && prefixes.some((p) => e.path.startsWith(p)))
     .map((e) => e.path);
+
+  // Circuit breaker: an empty match against a corpus with live docs means the
+  // registry prefixes and the tree disagree (e.g. a renamed directory) — a
+  // config problem, never grounds to wipe the index.
+  if (wanted.length === 0 && store.liveDocs(corpus.name).length > 0) {
+    throw new KnowledgeError("E_UNSUPPORTED", "tree listing matched no documents while the corpus has live docs; refusing to tombstone");
+  }
 
   const result: ReingestResult = {
     corpus: corpus.name,
@@ -117,6 +127,11 @@ export async function reingestCorpus(
     }
   }
 
-  store.setCorpusMeta(corpus.name, result.source_ref, now());
+  // Freshness advances only on a CLEAN sweep: a run with per-doc failures
+  // must leave knowledge_index_age_seconds growing (that is the §9 staleness
+  // alert's whole signal) and must not claim a commit it never fully applied.
+  if (result.errors.length === 0) {
+    store.setCorpusMeta(corpus.name, result.source_ref, now());
+  }
   return result;
 }

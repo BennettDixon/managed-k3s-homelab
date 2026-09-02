@@ -13,7 +13,10 @@ import { Store, sha256 } from "./store.js";
 
 // Control chars (minus \n\t), Unicode tag block (hidden-instruction
 // smuggling), and zero-width/invisible formatting codepoints (spec §6).
-const STRIP_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]|[\u200B-\u200F\u2060\uFEFF]|[\u{E0000}-\u{E007F}]/gu;
+// Also stripped since the 2026-09-02 review: bare \r (post-CRLF-collapse),
+// the C1 block, and bidi overrides/isolates (Trojan-Source-class hidden text).
+const STRIP_RE =
+  /[\u0000-\u0008\u000B-\u000D\u000E-\u001F\u007F-\u009F]|[\u200B-\u200F\u2060\uFEFF]|[\u202A-\u202E\u2066-\u2069]|[\u{E0000}-\u{E007F}]/gu;
 
 export function normalizeContent(raw: string): string {
   return raw.replace(/\r\n/g, "\n").replace(STRIP_RE, "");
@@ -33,7 +36,11 @@ export function canonicalizeUri(uri: string): string {
   }
   if (u.search !== "" || u.hash !== "") throw new KnowledgeError("E_URI_FORBIDDEN", "uris with query or fragment are not accepted");
   if (u.username !== "" || u.password !== "") throw new KnowledgeError("E_URI_FORBIDDEN", "uris with credentials are not accepted");
-  if (u.pathname.includes("//") || decodeURIComponent(u.pathname).includes("..")) {
+  // No percent-encoding at all: repo .md paths never need it, and rejecting
+  // "%" outright closes the whole decode-count class (double-encoding, %00,
+  // malformed escapes) in one check — review finding, 2026-09-02.
+  if (u.pathname.includes("%")) throw new KnowledgeError("E_URI_FORBIDDEN", "uri path contains percent-encoding");
+  if (u.pathname.includes("//") || u.pathname.includes("..")) {
     throw new KnowledgeError("E_URI_FORBIDDEN", "uri path contains dot segments or empty segments");
   }
   return u.href;

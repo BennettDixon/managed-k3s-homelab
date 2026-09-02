@@ -56,8 +56,9 @@ describe("reingest (spec §6 — the freshness mechanism)", () => {
     expect(store.getDoc("homelab-notes:docs/gone.md")!.tombstoned_at).not.toBeNull();
   });
 
-  it("a failing document does not abort the sweep and is reported", async () => {
+  it("a failing document does not abort the sweep, is reported, and freshness does NOT advance", async () => {
     const { store } = testStore();
+    store.setCorpusMeta("homelab-notes", "old-sha", 111);
     const fetcher = cannedFetcher({
       [TREE_URL]: treeJson(["docs/STATUS.md", "docs/broken.md"]),
       [`${RAW_PREFIX}docs/STATUS.md`]: "# STATUS\n\n## S\n\n" + "s ".repeat(200),
@@ -68,6 +69,32 @@ describe("reingest (spec §6 — the freshness mechanism)", () => {
     expect(r.errors).toEqual([{ uri: `${RAW_PREFIX}docs/broken.md`, code: "E_URI_UNREACHABLE" }]);
     // The failed doc must NOT be tombstoned — it is still in the tree.
     expect(r.tombstoned).toBe(0);
+    // A dirty sweep must leave knowledge_index_age_seconds growing — that is
+    // the staleness alert's signal (review, 2026-09-02).
+    expect(store.corpusMeta("homelab-notes")).toEqual({ source_ref: "old-sha", ingested_at: 111 });
+  });
+
+  it("refuses a truncated tree listing outright", async () => {
+    const { store } = testStore();
+    seedDoc(store, "homelab-notes:docs/keep.md", "homelab-notes", `${RAW_PREFIX}docs/keep.md`, "# K\n\n## S\n\n" + "k ".repeat(200));
+    const fetcher = cannedFetcher({
+      [TREE_URL]: JSON.stringify({ sha: "sha-t", truncated: true, tree: [] }),
+    });
+    await expect(reingestCorpus(store, config, corpus, "n8n-reingest", { fetcher })).rejects.toMatchObject({
+      code: "E_URI_UNREACHABLE",
+      retryable: true,
+    });
+    expect(store.liveDocs("homelab-notes")).toHaveLength(1);
+  });
+
+  it("circuit-breaks when the listing matches nothing but live docs exist", async () => {
+    const { store } = testStore();
+    seedDoc(store, "homelab-notes:docs/keep.md", "homelab-notes", `${RAW_PREFIX}docs/keep.md`, "# K\n\n## S\n\n" + "k ".repeat(200));
+    const fetcher = cannedFetcher({
+      [TREE_URL]: treeJson(["unrelated/other.md", "README.md"]),
+    });
+    await expect(reingestCorpus(store, config, corpus, "n8n-reingest", { fetcher })).rejects.toMatchObject({ code: "E_UNSUPPORTED" });
+    expect(store.liveDocs("homelab-notes")).toHaveLength(1);
   });
 
   it("an unreachable tree source aborts with a retryable error and tombstones nothing", async () => {
