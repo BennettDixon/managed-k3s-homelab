@@ -195,6 +195,18 @@ exist and be active. Do NOT merge the task_type PR until ALL of:
    # expect {"ok":true,"result":{"corpus":"homelab-notes","source_ref":"<sha>",...},"artifacts":[],"spent_usd":0}
    ```
 
+Accepted risk (same trust domain as the jobs webhooks and the alerts
+bearer): `X-Jobs-Webhook-Secret` is persisted verbatim in every
+`knowledge-reingest` execution, authorized or forged — webhook items keep
+raw headers, and n8n's header redaction covers only `authorization` /
+`cookie` and is not active — readable by any n8n UI/API identity.
+`KNOWLEDGE_REINGEST_TOKEN` (and `JOBS_MCP_BEARER_TOKEN`, if ever armed)
+never enter execution data — the HTTP node stores only the response and
+redacts `Authorization` in failed-request context — but any workflow author
+can print `$env`. One trust domain, as `proxmox/n8n.md` states. Gate step 4
+is also the first live proof of the n8n-node → knowledge-mcp path: a
+connection error there is an ACL question, not a token one.
+
 After merge, the end-to-end proof from any jobs-mcp client:
 `enqueue {task_type: "knowledge-reingest", payload: {corpus: "homelab-notes"},
 budget_cap: 0, artifacts_out: []}` → `status(id)` reaches `succeeded` with
@@ -206,20 +218,26 @@ budget_cap: 0, artifacts_out: []}` → `status(id)` reaches `succeeded` with
 `n8n/knowledge-reingest-nightly.json` enqueues one `knowledge-reingest` job
 per day at 03:30 instance time (day-keyed `idempotency_key`: a re-fired
 trigger is a replay, never a second run; the executor is idempotent anyway).
-It needs the jobs-mcp bearer in the n8n env as `JOBS_MCP_BEARER_TOKEN` — a
-SECOND HOLDER of the operator credential. That widens n8n's blast radius from
-"run executors" (it already holds `JOBS_WEBHOOK_SECRET`) to "enqueue any
-task_type up to `MAX_BUDGET_CAP_USD`", which is nil today (deterministic
-task types only, no gateway spend) but grows with agentic executors. The
-workflow is therefore imported INACTIVE; arming it is an explicit operator
-decision: add `JOBS_MCP_BEARER_TOKEN` to `/etc/n8n/n8n.env`, restart n8n,
-execute the workflow ONCE from the editor and confirm it prints a `job_id`
-(the trigger has never run — its enqueue path is verified only by review
-harness), then activate. The alternative that keeps the
-bearer in-cluster is a CronJob in the knowledge-mcp namespace reading the
-same SM key through an ExternalSecret. Either way, manual enqueue after
-doc-heavy merges is always available from any jobs-mcp client (the same
-envelope as above). Failure visibility: an unsuccessful enqueue errors the
+It needs the jobs-mcp bearer in the n8n env as `JOBS_MCP_BEARER_TOKEN`.
+That hands n8n — and every workflow author on it, since Code nodes read
+`$env` — the WHOLE jobs-mcp v1 tool surface: enqueue any task_type (the cap
+is per job only), read every job's result/error, cancel queued jobs. Nil
+today (n8n already is the only executor and holds `JOBS_WEBHOOK_SECRET`);
+real the day a worker or gateway executor lands. The workflow is therefore
+imported INACTIVE; arming it is an explicit operator decision. Prefer, in
+order: (1) a Schedule trigger calling knowledge-mcp `reingest` directly with
+the reingest-bot token n8n already holds — zero new secrets; it loses only
+the job row (a spec §6 deviation, so it needs the operator's sign-off;
+failure visibility is unchanged: `KnowledgeIndexStale` + n8n execution
+history); (2) once jobs-mcp has per-caller tokens (its NanoClaw retrofit),
+an `n8n-nightly` caller allowed only `enqueue knowledge-reingest`; (3) arm
+this workflow as-is: add `JOBS_MCP_BEARER_TOKEN` to `/etc/n8n/n8n.env`,
+restart n8n, execute the workflow ONCE from the editor and confirm it prints
+a `job_id` (the trigger has never run — its enqueue path is verified only by
+review harness), then activate. A CronJob holding the operator bearer is the
+same credential in a second namespace, not an improvement. Either way,
+manual enqueue after doc-heavy merges is always available from any jobs-mcp
+client (the same envelope as above). Failure visibility: an unsuccessful enqueue errors the
 n8n execution; a reingest that keeps failing surfaces as
 `KnowledgeIndexStale` within two days.
 
