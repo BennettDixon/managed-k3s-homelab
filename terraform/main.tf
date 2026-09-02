@@ -191,3 +191,30 @@ module "jobs_harbor_docker_pull_secret" {
     registry = var.harbor_registry_domain
   })
 }
+
+# knowledge-mcp secrets (spec: docs/specs/knowledge-mcp.md §2/§8; consumed by
+# the ExternalSecrets in apps/base/knowledge-mcp/)
+module "knowledge_mcp_caller_tokens_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_knowledge_mcp_caller_tokens"
+  description = "knowledge-mcp caller-token JSON map (caller_id -> token); policy lives in the repo registry. The n8n-reingest value must also live in the n8n LXC env as KNOWLEDGE_REINGEST_TOKEN"
+  # The WHOLE secret value is the map: the ExternalSecret reads it with no
+  # `property`, so the pod receives {"operator": ..., "n8n-reingest": ...}
+  # verbatim as KNOWLEDGE_CALLER_TOKENS (house target auth shape, SIGN-OFF 2).
+  # Adding a caller = one more entry here + a `callers:` line in corpora.yaml.
+  secret_value = jsonencode({
+    operator       = var.knowledge_mcp_operator_token
+    "n8n-reingest" = var.knowledge_mcp_n8n_reingest_token
+  })
+}
+
+module "knowledge_harbor_docker_pull_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_harbor_docker_pull_knowledge"
+  description = "Pull-only Harbor robot for the knowledge project (knowledge-mcp images)"
+  secret_value = jsonencode({
+    username = var.knowledge_harbor_docker_pull_username
+    password = var.knowledge_harbor_docker_pull_password
+    registry = var.harbor_registry_domain
+  })
+}
