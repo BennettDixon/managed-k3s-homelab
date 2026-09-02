@@ -26,6 +26,7 @@ export interface SearchHit {
   path: string;
   heading_path: string;
   text: string;
+  truncated: boolean;
   score: number;
   rank: number;
   trust: string;
@@ -159,24 +160,39 @@ export class Store {
     let rows = run(built.and);
     if (rows.length === 0 && built.terms.length > 1) rows = run(built.or);
 
+    // Response byte discipline (spec §3, ~24KiB): each hit's text is capped
+    // to a snippet — the chunk_id makes the full section one fetch away —
+    // and trailing hits are dropped once the running budget is spent. MCP
+    // results land verbatim in the calling agent's context; the cap is the
+    // per-call cost ceiling, enforced here rather than promised.
+    const SNIPPET_CAP = 2_048;
+    const RESPONSE_BUDGET = 24_576;
     const neighborStmt = this.db.prepare(`SELECT rowid FROM chunks WHERE doc_id = ? AND chunk_index = ?`);
-    return rows.map((r, i) => {
+    const hits: SearchHit[] = [];
+    let spent = 0;
+    for (const [i, r] of rows.entries()) {
       const doc = this.getDoc(r.doc_id)!;
+      const truncated = r.body.length > SNIPPET_CAP;
+      const text = truncated ? `${r.body.slice(0, SNIPPET_CAP)}…` : r.body;
+      if (spent + text.length > RESPONSE_BUDGET && hits.length > 0) break;
+      spent += text.length;
       const prev = neighborStmt.get(r.doc_id, r.chunk_index - 1) ? this.chunkIdOf(r.doc_id, r.chunk_index - 1) : null;
       const next = neighborStmt.get(r.doc_id, r.chunk_index + 1) ? this.chunkIdOf(r.doc_id, r.chunk_index + 1) : null;
-      return {
+      hits.push({
         chunk_id: this.chunkIdOf(r.doc_id, r.chunk_index) ?? `${r.doc_id}#${r.chunk_index}`,
         doc_id: r.doc_id,
         path: doc.uri,
         heading_path: r.heading_path,
-        text: r.body,
+        text,
+        truncated,
         score: normalizeScore(r.raw_score),
         rank: i + 1,
         trust: doc.trust,
         source_commit: doc.source_commit,
         neighbors: { prev, next },
-      };
-    });
+      });
+    }
+    return hits;
   }
 
   // Chunk ids are derived (doc_id + slug + ordinal) at chunk time but only the

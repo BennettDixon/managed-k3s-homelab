@@ -19,6 +19,26 @@ export function normalizeContent(raw: string): string {
   return raw.replace(/\r\n/g, "\n").replace(STRIP_RE, "");
 }
 
+// The prefix check runs on the CANONICALIZED url (URL parsing resolves dot
+// segments), never the raw string — "…/main/docs/../../../other/repo/x.md"
+// passes a raw startsWith but actually addresses a different path on the same
+// host. Queries and fragments are rejected outright: no allowlisted source
+// needs them, and they widen what a prefix can be smuggled past.
+export function canonicalizeUri(uri: string): string {
+  let u: URL;
+  try {
+    u = new URL(uri);
+  } catch {
+    throw new KnowledgeError("E_URI_FORBIDDEN", "uri is not a valid URL");
+  }
+  if (u.search !== "" || u.hash !== "") throw new KnowledgeError("E_URI_FORBIDDEN", "uris with query or fragment are not accepted");
+  if (u.username !== "" || u.password !== "") throw new KnowledgeError("E_URI_FORBIDDEN", "uris with credentials are not accepted");
+  if (u.pathname.includes("//") || decodeURIComponent(u.pathname).includes("..")) {
+    throw new KnowledgeError("E_URI_FORBIDDEN", "uri path contains dot segments or empty segments");
+  }
+  return u.href;
+}
+
 export function uriAllowed(uri: string, corpus: Corpus): boolean {
   return corpus.allowed_uri_prefixes.some((p) => uri.startsWith(p));
 }
@@ -80,6 +100,7 @@ export async function ingestUri(
   const fetcher = opts.fetcher ?? defaultFetcher;
   const now = opts.now ?? Date.now;
   if (!uri.startsWith("https://")) throw new KnowledgeError("E_URI_FORBIDDEN", "only https uris are accepted");
+  uri = canonicalizeUri(uri);
   if (!uriAllowed(uri, corpus)) throw new KnowledgeError("E_URI_FORBIDDEN", "uri is outside the corpus allow-list");
 
   let fetched: { status: number; text: string };

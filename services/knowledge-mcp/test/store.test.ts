@@ -71,6 +71,17 @@ describe("store transactions (spec §1/§6)", () => {
     expect(store.chunkBody("c:docs/a.md", "c:docs/a.md#nope")).toBeNull();
   });
 
+  it("caps hit text at the snippet limit and flags truncation", () => {
+    const { store } = testStore();
+    const registryCorpus = { name: "c" } as never;
+    const big = `# A\n\n## Long\n\nneedle ${"filler ".repeat(600)}\n`;
+    seedDoc(store, "c:docs/a.md", "c", URI, big);
+    const hits = store.search(registryCorpus, "needle", 6);
+    expect(hits[0]!.truncated).toBe(true);
+    expect(hits[0]!.text.length).toBeLessThanOrEqual(2_100);
+    expect(hits[0]!.text.endsWith("…")).toBe(true);
+  });
+
   it("search exposes neighbors as ids in document order", () => {
     const { store } = testStore();
     const registryCorpus = { name: "c" } as never;

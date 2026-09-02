@@ -64,6 +64,26 @@ describe("uri allow-list (spec §6 — the enforcement point)", () => {
   });
 });
 
+describe("uri canonicalization (allowlist bypass hardening)", () => {
+  it("rejects dot-segment smuggling past the prefix check", async () => {
+    const { store } = testStore();
+    const smuggled = `${RAW_PREFIX}docs/../../../someone-else/repo/main/evil.md`;
+    await expect(ingestUri(store, config, corpus, smuggled, "operator")).rejects.toMatchObject({ code: "E_URI_FORBIDDEN" });
+  });
+
+  it("rejects query strings, fragments, credentials, and empty segments", async () => {
+    const { store } = testStore();
+    for (const uri of [
+      `${RAW_PREFIX}docs/a.md?x=1`,
+      `${RAW_PREFIX}docs/a.md#frag`,
+      `https://user:pw@raw.githubusercontent.com/BennettDixon/managed-k3s-homelab/main/docs/a.md`,
+      `${RAW_PREFIX}docs//a.md`,
+    ]) {
+      await expect(ingestUri(store, config, corpus, uri, "operator")).rejects.toMatchObject({ code: "E_URI_FORBIDDEN" });
+    }
+  });
+});
+
 describe("normalization (spec §6)", () => {
   it("strips control chars, zero-width, and Unicode tag codepoints; keeps \\n and \\t", () => {
     const dirty = "a\u0000b\u200Bc\u{E0041}d\ne\tf\u0007g";
