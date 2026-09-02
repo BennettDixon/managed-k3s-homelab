@@ -7,8 +7,7 @@ review artifact linked from STATUS). Operator sign-offs, recorded where they
 bind as **[SIGN-OFF n]**: (1) pinned pod fetch — approved; (2) caller-token
 JSON map — delegated to engineering, map chosen ("get it right to start" —
 avoids the breaking scalar→map secret reshape later); (3) homelab-notes
-operator-only, NanoClaw gets a curated corpus later — approved; (4) first
-working CI job rides slice 1, broken kubeval workflow deleted — approved.
+operator-only, NanoClaw gets a curated corpus later — approved; (4) first working CI job rides slice 1, broken kubeval workflow deleted — approved; (5) nightly freshness = a direct Schedule → `reingest` with the reingest-bot token n8n already holds, the queue-shaped scheduler parked until jobs-mcp per-caller tokens — approved 2026-09-02 (as-built note below).
 
 **As-built deltas (slice 2, 2026-09-02):** the Deployment adds a
 `startupProbe` (2 min) because the boot re-chunk (§5) runs before the
@@ -317,7 +316,7 @@ which is exactly the staleness alert's signal. Scheduled by a
 executor's *only* action is calling `reingest` with the scoped
 `n8n-reingest` token. The executor fetches nothing, parses nothing, holds no
 content; n8n compromise's knowledge blast radius is "can re-index the public
-repo" — nil. Nightly schedule + manual enqueue after doc-heavy merges.
+repo" — nil. Nightly schedule + manual enqueue after doc-heavy merges. **[SIGN-OFF 5, as-built]:** the nightly run is a direct `reingest` schedule with the reingest-bot token (as-built note at the top); the task type serves manual enqueues until jobs-mcp per-caller tokens exist.
 Registry entry + workflow export ship in one PR (n8n/ convention).
 
 **Budget discipline pre-gateway:** v1 spends $0 **by construction** — no
