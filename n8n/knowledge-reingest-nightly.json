@@ -1,0 +1,127 @@
+{
+  "name": "knowledge-reingest-nightly",
+  "nodes": [
+    {
+      "id": "schedule-1",
+      "name": "Nightly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 3 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "code-1",
+      "name": "Build enqueue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Nightly freshness (knowledge spec §6): enqueue ONE knowledge-reingest job\n// on jobs-mcp. budget_cap: 0 by contract (no model spend on this path).\n// The idempotency_key is day-keyed, so a re-fired trigger the same day is an\n// idempotent replay (jobs spec §3), never a second run.\nconst day = $now.toFormat('yyyy-LL-dd');\nreturn [{ json: { rpc: {\n  jsonrpc: '2.0', id: `nightly-${day}`, method: 'tools/call',\n  params: { name: 'enqueue', arguments: {\n    task_type: 'knowledge-reingest',\n    payload: { corpus: 'homelab-notes' },\n    budget_cap: 0,\n    artifacts_out: [],\n    idempotency_key: `knowledge-reingest-homelab-notes-${day}`,\n  } },\n} } }];"
+      }
+    },
+    {
+      "id": "http-1",
+      "name": "Enqueue on jobs-mcp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://jobs-mcp/mcp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.JOBS_MCP_BEARER_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json, text/event-stream"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rpc) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "code-2",
+      "name": "Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Fail the execution loudly if the enqueue did not succeed (visible in n8n\n// execution history; sustained failure surfaces as KnowledgeIndexStale).\nconst res = $input.first().json; // fullResponse: {data|body, headers, statusCode}\nconst raw = res.data ?? res.body;\nconst text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? '');\nlet payload = null;\nfor (const line of text.split(/\\r?\\n/)) if (line.startsWith('data:')) payload = line.slice(5).trim();\nif (payload === null) payload = text.trim();\nlet rpc = null;\ntry { rpc = JSON.parse(payload); } catch {}\nif (res.statusCode !== 200 || !rpc) throw new Error(`jobs-mcp returned ${res.statusCode}`);\nif (rpc.error) throw new Error(`rpc error: ${String(rpc.error.message ?? '').slice(0, 200)}`);\nlet tool = null;\ntry { tool = JSON.parse(rpc.result?.content?.[0]?.text ?? ''); } catch {}\nif (!tool) throw new Error('unparseable enqueue result');\nif (rpc.result?.isError) throw new Error(`enqueue failed: ${tool.code} ${String(tool.message ?? '').slice(0, 200)}`);\nreturn [{ json: { job_id: tool.id, idempotent_replay: tool.idempotent_replay === true } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Nightly": {
+      "main": [
+        [
+          {
+            "node": "Build enqueue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build enqueue": {
+      "main": [
+        [
+          {
+            "node": "Enqueue on jobs-mcp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enqueue on jobs-mcp": {
+      "main": [
+        [
+          {
+            "node": "Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
