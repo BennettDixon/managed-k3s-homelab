@@ -116,6 +116,45 @@ Findings to know about (none block work, all pre-existing):
   for `jobs-mcp-data` labeled `namespace="default"` (no such PVC/pod exists);
   alert rules scope `namespace="jobs-mcp"` and are immune.
 
+## Pulse check (2026-09-02, session start)
+
+All inherited-stack checks green: jobs-mcp `healthz`/`readyz` 200 over the
+tailnet; smoke-heartbeat `enqueue → succeeded` (attempts:1, ~300 ms through
+the n8n bridge); knowledge-mcp and manifests CI both green on `main`; a
+synthetic alert `Alertmanager → n8n` ran as a successful `alerts-webhook`
+execution (Telegram leg is the operator's confirmation); all 8 Flux
+kustomizations Ready at `main`; three gateways online and advertising —
+`tailscale-gw` primary for the compute subnet, `tailscale-gw2` standby with
+the identical route approved, `tailscale-gw-edge` primary for the edge
+subnet; `jobs_bridge_up`=1 scraped.
+
+Findings (none block work; all pre-existing):
+
+- **Node disk 77.7%** (73% on 09-01): 71.1 GiB of 97.9 GiB used; the
+  kubelet image filesystem alone is 29.2 GiB, Prometheus TSDB 3.5 GiB, the
+  rest is local-path PVC data (Harbor registry, phyt-system timescaledb).
+  `JobsPvcDiskFilling` fires at 80% — expect it within days; kubelet's own
+  image GC only starts at 85%. Remedy is an operator call (destructive):
+  prune unused images on the node (`k3s crictl rmi --prune`) and review the
+  Harbor registry share.
+- **Harbor admin password drift**: the AWS SM value
+  (`k3s_harbor_admin_password`, synced into the `harbor-admin-password`
+  secret) no longer matches the live admin login (401) — the chart reads
+  `existingSecretAdminPassword` at install only and the password was
+  changed in the UI since. Admin API access is therefore not
+  reconstructable from terraform. Workaround used this session: the
+  `knowledge` project was created through the API as the operator's
+  `docker-push` user (project creation is open to every user; creator =
+  project admin, demoted to maintainer afterwards, `bennett` added as
+  project admin). Fix is the operator's: reset the admin password to the
+  SM value, or put the live value into SM (targeted apply).
+- **AWS SSO session expired** at session start (profile `bennett-personal`):
+  the targeted terraform apply for the knowledge secrets waits on
+  `aws sso login --profile bennett-personal --no-browser`.
+- **Golden eval blind spot closing**: an `expect_miss` query ("how much
+  does it cost to run a job") now hits — promote it in
+  `services/knowledge-mcp/eval/golden.yaml` (improvement, not failure).
+
 ## Parked (deliberate, not forgotten)
 - **~~knowledge-mcp vector store~~ — DECIDED 2026-09-02** (spec
   `docs/specs/knowledge-mcp.md` §1, panel + adversarial critique):
