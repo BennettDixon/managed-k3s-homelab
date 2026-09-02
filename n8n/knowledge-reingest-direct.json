@@ -63,7 +63,7 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.rpc) }}",
         "options": {
-          "timeout": 150000,
+          "timeout": 300000,
           "response": {
             "response": {
               "fullResponse": true,
