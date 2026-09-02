@@ -234,6 +234,34 @@ is the operator's call:
 - Spun-off task chips: external-secrets IAM identity under terraform;
   jobs-mcp bridge-gauge idle-blindness (timer probe).
 
+## Session log — knowledge-mcp deployable + scheduled freshness (2026-09-02, evening)
+
+Both PRs carry three-lens adversarial reviews and their MERGE GATEs; merging
+and the one remaining gate step are the operator's:
+
+- **PR #9 — knowledge-mcp slice 2** (manifests, secrets, Harbor + CI wiring).
+  DRAFT until the TARGETED terraform apply of `k3s_knowledge_mcp_caller_tokens`
+  + `k3s_harbor_docker_pull_knowledge` lands (values in the local tfvars; the
+  operator's SSO session had expired). Done live: Harbor `knowledge` project
+  + pull robot, image `0.1.0` pushed and proven read-only/non-root, corpus
+  registry validated in CI, the service exercised against real GitHub
+  (10 docs / 83 chunks at `main@5e8cc78`). Review: 3 agents, 24 findings,
+  all but three taken — headline: `KnowledgeIndexNeverBuilt` (the stale alert
+  was blind to a never-built corpus), pod hardening (no SA token, read-only
+  rootfs, no caps), runbook diagnostics that work from kubectl.
+- **PR #10 — knowledge-reingest task_type** (stacked on #9): jobs-mcp
+  registry entry + executor workflow (imported, ACTIVE, proven through a
+  temporary copy against a local instance: authorized → completion report;
+  forged / out-of-scope / malformed → fail closed) + nightly trigger
+  (imported INACTIVE). `KNOWLEDGE_REINGEST_TOKEN` is live in the n8n env.
+  End-to-end proof (enqueue → reingest → index_as_of advances) follows the
+  two merges. Review: 2 agents (executor contract; security/identity), 11 findings, all taken — the dispatcher timeout was shorter than the executor's (orphaned executions on a slow night), error messages now carry what jobs-mcp actually preserves, jobs-mcp gained its first CI workflow with a deployed-registry guard (spec §4's CI-checkable invariant).
+- **Operator decision parked in the runbook:** arming the nightly trigger
+  puts the jobs-mcp bearer into the n8n env (second holder of the operator
+  credential). Alternative: an in-cluster CronJob via ExternalSecret.
+- Harbor admin password drift and the node-disk numbers: see the pulse
+  check above.
+
 ## Next session starts with
 
 - **knowledge-mcp slice 2 — PR'd 2026-09-02** (`feat/knowledge-mcp-slice-2`,
@@ -244,7 +272,7 @@ is the operator's call:
   validated in CI, image proven read-only/non-root. After merge: pod Ready
   → first operator `reingest` → search hits → metrics scraped (runbook
   "First run").
-- **knowledge-mcp slice 3 — stacked PR** (`feat/knowledge-mcp-slice-3`):
+- **knowledge-mcp slice 3 — PR #10** (draft, stacked on #9):
   `knowledge-reingest` task_type + executor (imported on n8n, ACTIVE,
   proven against a local instance) + nightly trigger (imported INACTIVE —
   the jobs-bearer-in-n8n decision is the operator's, runbook "Scheduled
@@ -280,6 +308,13 @@ is the operator's call:
 - 2026-09-02: homelab-notes stays operator-only permanently; NanoClaw will
   be served a deliberately curated corpus (e.g. homelab-faq) instead of the
   working notes (conversational-exfiltration fence).
+- 2026-09-02: the nightly `knowledge-reingest` trigger is imported but stays
+  INACTIVE until the operator decides where the scheduler's credential
+  lives — the jobs-mcp bearer in the n8n env (whole v1 tool surface to every
+  workflow author), a direct `reingest` schedule with the reingest-bot token
+  n8n already holds (zero new secrets, loses the job row — spec §6
+  deviation), or per-caller jobs-mcp tokens later. Reingest is manual until
+  then; `KnowledgeIndexStale` keeps that honest.
 - 2026-09-02: shared-base HelmRelease values that are prod-only (receiver
   config, secret mounts) live as apps/homelab-prod PATCHES, not in the base
   — apps/development consumes the same bases (learned from the alerts
