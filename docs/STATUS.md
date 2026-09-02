@@ -151,8 +151,8 @@ Findings (none block work; all pre-existing):
   to maintainer afterwards, `bennett` added as project admin). Fix is the
   operator's: reset the admin password to the SM value, or put the live
   value into SM (targeted apply).
-- **AWS SSO session expired** at session start: the targeted terraform
-  apply for the knowledge secrets waits on an operator `aws sso login`.
+- **AWS SSO session expired** at session start; after the operator's login
+  the targeted apply ran clean (4 add / 0 change / 0 destroy) and #9 merged.
 - **Golden eval blind spot closing**: an `expect_miss` query ("how much
   does it cost to run a job") now hits — promote it in
   `services/knowledge-mcp/eval/golden.yaml` (improvement, not failure).
@@ -239,17 +239,21 @@ is the operator's call:
 Both PRs carry three-lens adversarial reviews and their MERGE GATEs; merging
 and the one remaining gate step are the operator's:
 
-- **PR #9 — knowledge-mcp slice 2** (manifests, secrets, Harbor + CI wiring).
-  DRAFT until the TARGETED terraform apply of `k3s_knowledge_mcp_caller_tokens`
-  + `k3s_harbor_docker_pull_knowledge` lands (values in the local tfvars; the
-  operator's SSO session had expired). Done live: Harbor `knowledge` project
-  + pull robot, image `0.1.0` pushed and proven read-only/non-root, corpus
-  registry validated in CI, the service exercised against real GitHub
-  (10 docs / 83 chunks at `main@5e8cc78`). Review: 3 agents, 24 findings,
+- **PR #9 — knowledge-mcp slice 2** (manifests, secrets, Harbor + CI wiring)
+  — **MERGED and LIVE 2026-09-02**: targeted terraform apply of
+  `k3s_knowledge_mcp_caller_tokens` + `k3s_harbor_docker_pull_knowledge`
+  (4 add / 0 destroy), Flux at the merge commit ~80 s later, pod Ready with
+  both ExternalSecrets synced and the image pulled through the new robot,
+  first operator `reingest` indexed 11 docs / 93 chunks at `main@f5043ad`
+  in 2 s, search proven over the tailnet, Prometheus scraping with all four
+  rules loaded. Pre-merge: Harbor `knowledge` project + pull robot, image
+  `0.1.0` proven read-only/non-root, registry validated in CI. Review: 3 agents, 24 findings,
   all but three taken — headline: `KnowledgeIndexNeverBuilt` (the stale alert
   was blind to a never-built corpus), pod hardening (no SA token, read-only
   rootfs, no caps), runbook diagnostics that work from kubectl.
-- **PR #10 — knowledge-reingest task_type** (stacked on #9): jobs-mcp
+- **PR #11 — knowledge-reingest task_type** (first opened as #10 stacked
+  on the slice-2 branch; that merge landed on the branch, not `main` — same
+  reviewed content re-targeted): jobs-mcp
   registry entry + executor workflow (imported, ACTIVE, proven through a
   temporary copy against a local instance: authorized → completion report;
   forged / out-of-scope / malformed → fail closed) + nightly trigger
@@ -264,15 +268,11 @@ and the one remaining gate step are the operator's:
 
 ## Next session starts with
 
-- **knowledge-mcp slice 2 — PR'd 2026-09-02** (`feat/knowledge-mcp-slice-2`,
-  adversarial review round 1 applied). Open gate item before merge: the
-  TARGETED terraform apply of the two SM entries (values ready in the
-  local tfvars; waits on the operator's SSO login). Done already: Harbor
-  `knowledge` project + pull robot, image `0.1.0` pushed, registry
-  validated in CI, image proven read-only/non-root. After merge: pod Ready
-  → first operator `reingest` → search hits → metrics scraped (runbook
-  "First run").
-- **knowledge-mcp slice 3 — PR #10** (draft, stacked on #9):
+- **knowledge-mcp slice 2 — MERGED + LIVE 2026-09-02** (#9): first run
+  complete per the runbook (pod Ready, first reingest, search, metrics).
+  Register the operator token on the workbench (`mini/mcp-config.md`).
+- **knowledge-mcp slice 3 — PR #11** (re-targeted to main after #10
+  merged into the slice-2 branch):
   `knowledge-reingest` task_type + executor (imported on n8n, ACTIVE,
   proven against a local instance) + nightly trigger (imported INACTIVE —
   the jobs-bearer-in-n8n decision is the operator's, runbook "Scheduled
