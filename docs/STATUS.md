@@ -131,12 +131,11 @@ Findings to know about (none block work, all pre-existing):
   for a single-operator cluster (documented in docs/runbooks/alerts.md);
   the follow-up is a NetworkPolicy restricting ingress to Prometheus +
   operator pods.
-- **Terminal notification channel** (2026-09-02): alerts now flow
-  Alertmanager → n8n `alerts-webhook` workflow, but the last hop to a
-  human needs a one-time operator step in the n8n UI — attach a
-  notification node (email/Telegram/push) after "Respond 200" on the
-  authorized branch, then re-export to n8n/. Until then, n8n execution
-  history is the delivery record. Related seam: an external dead-man's
+- **~~Terminal notification channel~~ — DONE 2026-09-02**: Telegram node
+  wired after "Respond 200" on the authorized branch (operator created the
+  bot + credential in the n8n UI; chat id rides `$env` in the LXC, never
+  in git; canonical export updated). Alerts reach the operator's phone
+  end-to-end. Still parked from that thread: an external dead-man's
   snitch on the Watchdog alert (compute site is a single fate domain for
   the whole alerting stack).
 - **Redis at compute site** — deploy only when its first real consumer
