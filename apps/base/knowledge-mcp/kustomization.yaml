@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: knowledge-mcp
+resources:
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml
+  - servicemonitor.yaml
+  - prometheusrule.yaml
+  # ExternalSecrets live in this base, NOT apps/secrets/ (jobs-mcp precedent):
+  # apps/secrets is shared with the development cluster, which has no
+  # knowledge-mcp namespace. Legal ONLY because this base is never added to
+  # apps/development (spec §8) — the alerts-wiring review drew that line.
+  - knowledge-mcp-caller-tokens.yaml
+  - knowledge-mcp-registry-harbor-docker-login.yaml
+configMapGenerator:
+  # Hash-suffixed: a registry change rolls the Recreate Deployment (spec §4);
+  # a boot-read ConfigMap updated in place would go silently stale.
+  - name: knowledge-mcp-corpora
+    files:
+      - corpora.yaml

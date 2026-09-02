@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge-mcp
+  namespace: knowledge-mcp
+spec:
+  # replicas 1 + Recreate + the RWO PVC make a second SQLite writer
+  # structurally impossible across upgrades and rollbacks (spec §1, §8).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: knowledge-mcp
+  template:
+    metadata:
+      labels:
+        app: knowledge-mcp
+    spec:
+      imagePullSecrets:
+        - name: knowledge-mcp-registry-harbor-docker-login
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: knowledge-mcp
+          image: harbor.internal/knowledge/knowledge-mcp:0.1.0
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PORT
+              value: "8080"
+            # DB_PATH and REGISTRY_PATH are deliberately NOT set: the image's
+            # compiled defaults (/data/knowledge.db, /config/corpora.yaml)
+            # match the volumeMounts below; pinning them here would be a
+            # second source of truth for image-internal paths.
+            # The WHOLE caller-token JSON map {caller_id: token} (spec §2).
+            # Policy (caller -> class -> tools/corpora) is corpora.yaml's job,
+            # never the secret's; a token whose id has no registry entry
+            # authenticates nobody.
+            - name: KNOWLEDGE_CALLER_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: knowledge-mcp-caller-tokens
+                  key: tokens
+          # Boot may re-chunk every live doc before listening (chunker-version
+          # bump, spec §5). The startup probe gives that up to 2 min so a
+          # large corpus can never turn a routine deploy into a liveness
+          # restart loop; liveness/readiness take over once /healthz answers.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          # Liveness never writes. Readiness is a READ ping + registry parsed
+          # + token map loaded — deliberately NO write-ping (spec §8): a full
+          # disk must degrade ingest (error + metric), never take search down.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: corpora
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: knowledge-mcp-data
+        - name: corpora
+          configMap:
+            name: knowledge-mcp-corpora

@@ -1,0 +1,24 @@
+# Caller-token JSON map (spec §2, SIGN-OFF 2): ONE SM secret whose entire
+# value is {"operator": "<token>", "n8n-reingest": "<token>"}. The remoteRef
+# carries no `property` ON PURPOSE — the service wants the whole map as one
+# env var and resolves caller_id -> class through the repo registry
+# (corpora.yaml). Adding a caller = a new key in the SM map (terraform,
+# targeted apply) + a `callers:` line in corpora.yaml. House target shape:
+# jobs-mcp adopts it at its NanoClaw retrofit.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: knowledge-mcp-caller-tokens
+  namespace: knowledge-mcp
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: knowledge-mcp-caller-tokens
+    creationPolicy: Owner
+  data:
+    - secretKey: tokens
+      remoteRef:
+        key: k3s_knowledge_mcp_caller_tokens
