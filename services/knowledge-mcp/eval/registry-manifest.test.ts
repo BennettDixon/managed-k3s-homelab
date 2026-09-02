@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseRegistry, visibleCorpora, CLASS_TOOLS } from "../src/registry.js";
@@ -37,9 +37,17 @@ describe("deployed registry (apps/base/knowledge-mcp/corpora.yaml)", () => {
     expect(CLASS_TOOLS[bot.class].has("search")).toBe(false);
   });
 
-  it("stays public-repo safe: no tailnet FQDNs or private addresses in the file", () => {
-    const text = readFileSync(REGISTRY_PATH, "utf8");
-    expect(text).not.toMatch(/\.ts\.net/);
-    expect(text).not.toMatch(/\b(10|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d+\.\d+/);
+  it("stays public-repo safe: no tailnet FQDNs, private, or tailnet (CGNAT/ULA) addresses in the shipped files", () => {
+    // Four-octet forms only (no false positives on version strings); the
+    // 100.64/10 CGNAT range is every tailnet IPv4, fd7a:115c:a1e0 the ULA.
+    const privateOrTailnet =
+      /\b(10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])(\.\d{1,3}){2})\b|fd7a:115c:a1e0/i;
+    const dir = join(REPO_ROOT, "apps/base/knowledge-mcp");
+    const files = readdirSync(dir).map((f) => join(dir, f)).concat(join(REPO_ROOT, "docs/runbooks/knowledge-mcp.md"));
+    for (const f of files) {
+      const text = readFileSync(f, "utf8");
+      expect(text, f).not.toMatch(/\.ts\.net/);
+      expect(text, f).not.toMatch(privateOrTailnet);
+    }
   });
 });

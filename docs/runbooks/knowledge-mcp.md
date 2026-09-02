@@ -41,9 +41,12 @@ merge the manifests PR until ALL of these exist:
    Use the `docker`-driver builder: `docker-container` builders push from
    inside BuildKit, which does not trust the homelab root CA.
    Harbor's admin login is NOT the SM value any more (STATUS finding
-   2026-09-02): create projects/robots in the UI as `bennett`, or via the API
-   as the `docker-push` user (project creation is open to every user; the
-   creator lands as project admin — demote to maintainer afterwards).
+   2026-09-02): create projects/robots in the UI as `bennett`. If scripting
+   it instead, authenticate as the docker-push user with `curl -u docker-push`
+   (password prompted) or `--netrc` — never a password on a command line —
+   and demote the creator from project admin to maintainer afterwards. The
+   robot secret is shown ONCE at creation: capture it straight into
+   `terraform.tfvars`.
 3. **Registry parseable**: `apps/base/knowledge-mcp/corpora.yaml` passes the
    service's admission rules. CI runs `eval/registry-manifest.test.ts`
    against the real file on every PR touching it; locally `npm run eval` in
@@ -63,27 +66,37 @@ boot from stored content (no network); the startup probe allows 2 minutes.
 1. **Flux**: `kubectl -n flux-system get kustomization apps` Ready at the
    merge commit; `kubectl -n knowledge-mcp get externalsecret` → both
    `SecretSynced`; `kubectl -n knowledge-mcp get pods` → `1/1 Running`.
-   `ImagePullBackOff` = gate 2 missed; `CreateContainerConfigError` = gate 1
-   (secret absent); `0/1 Running` with `/readyz` 503 `registry parse
-   failed` = gate 3.
-2. **Probes over the tailnet**: `curl http://knowledge-mcp/healthz` and
-   `/readyz` → `{"ok":true}`.
+   Diagnose from kubectl, not the tailnet — a NotReady pod has no Service
+   endpoints, so `http://knowledge-mcp` simply refuses connections:
+   `ImagePullBackOff` = gate 2 (image not pushed) OR gate 1's pull-robot
+   entry missing (kubelet pulls anonymously without the secret);
+   `CreateContainerConfigError` = gate 1's token map missing;
+   `0/1 Running` + `kubectl -n knowledge-mcp logs deploy/knowledge-mcp |
+   grep registry_parse_failed` = gate 3.
+2. **Probes over the tailnet** (once Ready): `curl http://knowledge-mcp/healthz`
+   and `/readyz` → `{"ok":true}`.
 3. **First reingest** — the index starts EMPTY; search returns nothing until
    this runs. With the operator token exported as `KNOWLEDGE_MCP_TOKEN`
    (never on the command line of a shared shell history):
    ```bash
-   mcp() { curl -sS -X POST http://knowledge-mcp/mcp \
+   # -f: a 401 prints "curl: (22) ... 401" instead of nothing
+   mcp() { curl -sS -f -X POST http://knowledge-mcp/mcp \
      -H "Authorization: Bearer $KNOWLEDGE_MCP_TOKEN" \
      -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
      -d "$1" | sed -n 's/^data: //p'; }
    mcp '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"reingest","arguments":{"corpus":"homelab-notes"}}}'
    mcp '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"corpus":"homelab-notes","query":"tailscale gateway sysctl forwarding","k":3}}}'
    ```
-   Expect the reingest result `{"corpus":"homelab-notes","source_ref":"<tree
-   sha>","indexed":N,"unchanged":0,"tombstoned":0,"errors":[]}` and search
-   hits carrying `path`, `heading_path`, `trust`, `source_commit`. A
-   non-empty `errors` list = per-doc fetch failures; `index_as_of` does not
-   advance until a clean sweep (spec §6) — fix, re-run (idempotent).
+   What prints is the JSON-RPC envelope; the tool result is the JSON string
+   in `.result.content[0].text` (append `| jq -r '.result.content[0].text'`
+   to unwrap it). Expect the reingest result `{"corpus":"homelab-notes",
+   "source_ref":"<tree sha>","indexed":N,"unchanged":0,"tombstoned":0,
+   "errors":[]}` and search hits carrying `path`, `heading_path`, `trust`,
+   `source_commit`. A non-empty `errors` list = per-doc fetch failures;
+   `index_as_of` does not advance until a clean sweep (spec §6) — fix,
+   re-run (idempotent). Until the nightly `knowledge-reingest` job (slice 3)
+   runs, `KnowledgeIndexStale` WILL fire 48 h after the last manual
+   reingest — expected; re-run by hand or accept it.
 4. **Metrics**: Prometheus `up{namespace="knowledge-mcp"}` = 1,
    `knowledge_docs{corpus="homelab-notes"}` > 0, rules present:
    `kubectl -n knowledge-mcp get prometheusrule`.
@@ -110,14 +123,26 @@ map key (terraform) + a `callers:` line in `corpora.yaml` — the PR is where
 a human reads what they grant; a token whose id has no registry entry
 authenticates nobody.
 
+Harbor robot rotation: create a new robot in the UI, put its name/secret
+into `terraform.tfvars` → targeted apply of
+`module.knowledge_harbor_docker_pull_secret` → ExternalSecret refresh →
+delete the old robot. Pulls only happen at pod (re)creation, so a stale
+secret shows up as `ImagePullBackOff` on the next deploy, never mid-run.
+
 ## Reingest failing (`KnowledgeIndexStale`) checklist
 
-1. `kubectl -n knowledge-mcp logs deploy/knowledge-mcp | grep reingest` —
-   the `errors` count; `knowledge_ingest_errors_total{code}` in Prometheus
-   names the class: `E_URI_UNREACHABLE` (GitHub raw/API unreachable from the
-   pod, or a truncated tree listing), `E_DOC_TOO_LARGE` (a doc outgrew
-   `max_doc_bytes` — raise it in the registry, ≤512KiB), `E_INTERNAL`
-   (disk full — the node, not the claim: see `JobsPvcDiskFilling`).
+1. Tree-level failures (GitHub API unreachable or 403, a truncated
+   listing, the circuit breaker) are NOT in pod logs — they reach only the
+   caller's tool result and `knowledge_ingest_errors_total{code}`: read the
+   job's `status(id).error` / the n8n execution output, or re-run
+   `reingest` by hand and read the error. A sweep that completed with
+   per-doc failures does log `"evt":"reingest"` with its `errors` count
+   (`kubectl -n knowledge-mcp logs deploy/knowledge-mcp | grep reingest`).
+   The code names the class: `E_URI_UNREACHABLE` (GitHub raw/API
+   unreachable from the pod, or a truncated tree listing),
+   `E_DOC_TOO_LARGE` (a doc outgrew `max_doc_bytes` — raise it in the
+   registry, ≤512KiB), `E_INTERNAL` (disk full — the node, not the claim:
+   see `JobsPvcDiskFilling`).
 2. `E_UNSUPPORTED: tree listing matched no documents while the corpus has
    live docs` = the circuit breaker: registry prefixes and the repo tree
    disagree (a renamed directory). Fix the registry; nothing was tombstoned.

@@ -70,7 +70,11 @@ claude mcp add --transport http --scope user knowledge-mcp http://knowledge-mcp/
 `KNOWLEDGE_MCP_TOKEN` lives in `~/.zshenv` (the `operator` entry of the
 caller-token map — terraform var `knowledge_mcp_operator_token`; rotate in
 tfvars → targeted apply → pod restart → update the env, see
-`docs/runbooks/knowledge-mcp.md`). Tools: `search`, `fetch`, `ingest`,
+`docs/runbooks/knowledge-mcp.md`). Never paste the literal token into
+`claude mcp add`: it would land in shell history AND in plaintext
+`~/.claude.json`. Keep the single-quoted `${KNOWLEDGE_MCP_TOKEN}` reference;
+a 401 from the server usually means the variable was unset when the MCP
+server started (`echo ${KNOWLEDGE_MCP_TOKEN:+set}`). Tools: `search`, `fetch`, `ingest`,
 `reingest`, `list_corpora` (spec §3). The `agent` account gets its own caller
 id (one more map key + `callers:` line) rather than the operator token when
 it needs access; NanoClaw is never registered against this token — it gets a

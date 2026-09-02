@@ -10,6 +10,15 @@ avoids the breaking scalar→map secret reshape later); (3) homelab-notes
 operator-only, NanoClaw gets a curated corpus later — approved; (4) first
 working CI job rides slice 1, broken kubeval workflow deleted — approved.
 
+**As-built deltas (slice 2, 2026-09-02):** the Deployment adds a
+`startupProbe` (2 min) because the boot re-chunk (§5) runs before the
+listener opens and would otherwise trip liveness on a large corpus; §9 gains
+a fourth rule, `KnowledgeIndexNeverBuilt` (docs exist, no `index_age`
+series, 48h), because `knowledge_index_age_seconds` only exists after a
+corpus's first clean sweep and `KnowledgeIndexStale` is therefore blind to
+a never-built corpus; the pod runs with no projected SA token, a read-only
+root filesystem, and all capabilities dropped (first internet-fetching pod).
+
 **README paragraph (repo convention):** `knowledge-mcp` is the retrieval MCP
 service of the personal cloud. It answers `search` and `fetch` over registered
 corpora and keeps those corpora current via `ingest`/`reingest`, backed by one

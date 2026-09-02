@@ -37,8 +37,14 @@ export function parseCallerTokens(raw: string): Map<string, string> {
   }
   const map = new Map<string, string>();
   const seen = new Set<string>();
+  let position = 0;
   for (const [id, token] of Object.entries(parsed)) {
-    if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(id)) throw new Error(`caller id ${JSON.stringify(id)} is not a valid identifier`);
+    position++;
+    // The offending key is deliberately NOT echoed: a swapped key/value pair
+    // would otherwise print a token into the shipped boot log (review).
+    if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(id)) {
+      throw new Error(`caller id at map position ${position} is not a valid identifier (must match ^[a-z0-9][a-z0-9-]{1,62}$)`);
+    }
     if (typeof token !== "string" || token.length < 16) throw new Error(`caller ${id}: token must be a string of at least 16 chars`);
     // A duplicated value would make resolveCaller's full-iteration loop
     // resolve to whichever id sorts last — silent identity confusion from a

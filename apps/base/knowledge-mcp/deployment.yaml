@@ -20,10 +20,19 @@ spec:
       imagePullSecrets:
         - name: knowledge-mcp-registry-harbor-docker-login
       terminationGracePeriodSeconds: 30
+      # This is the first pod that fetches internet content on request
+      # (ingest/reingest). It needs no API access, ever — so it holds no
+      # projected SA token a fetch-path bug could hand out — and it runs on
+      # a read-only root filesystem (writes go to /data and a /tmp emptyDir
+      # for SQLite temp files only). The in-code https allow-list is the
+      # SSRF fence; the cluster has no egress NetworkPolicy precedent.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: knowledge-mcp
           image: harbor.internal/knowledge/knowledge-mcp:0.1.0
@@ -47,9 +56,10 @@ spec:
                   name: knowledge-mcp-caller-tokens
                   key: tokens
           # Boot may re-chunk every live doc before listening (chunker-version
-          # bump, spec §5). The startup probe gives that up to 2 min so a
-          # large corpus can never turn a routine deploy into a liveness
-          # restart loop; liveness/readiness take over once /healthz answers.
+          # bump, spec §5). The startup probe gives that up to 2 min (24 x 5s)
+          # before liveness may restart the pod — a corpus that re-chunks
+          # slower than that needs a larger failureThreshold, not a bigger
+          # liveness budget. Liveness/readiness take over once /healthz answers.
           startupProbe:
             httpGet:
               path: /healthz
@@ -76,12 +86,19 @@ spec:
             limits:
               cpu: 250m
               memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data
             - name: corpora
               mountPath: /config
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -89,3 +106,6 @@ spec:
         - name: corpora
           configMap:
             name: knowledge-mcp-corpora
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

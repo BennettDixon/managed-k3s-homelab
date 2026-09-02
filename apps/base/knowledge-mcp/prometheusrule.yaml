@@ -45,12 +45,36 @@ spec:
             summary: "knowledge.db exceeds 80% of the PVC's nominal 1Gi"
             description: >-
               local-path never enforces the 1Gi claim, so the DB crossing
-              ~820MB means corpus volume has outgrown v1 assumptions (corpus
-              #1 measured 216KiB at spec time, ~4,600x headroom). Ingest
-              would start failing cleanly on a full node disk while search
-              keeps serving (spec §8). Investigate which corpus grew before
-              the node disk pays for it; the index is a cache, so the
-              remedy is a registry change + reingest, never a migration.
+              ~820MB means corpus volume has outgrown v1 assumptions by
+              three orders of magnitude (corpus #1: 10 docs / 83 chunks,
+              well under 1MiB; the gauge is the main file — the WAL is
+              bounded by auto-checkpoint). Ingest would start failing
+              cleanly on a full node disk while search keeps serving (spec
+              §8). Investigate which corpus grew before the node disk pays
+              for it; the index is a cache, so the remedy is a registry
+              change + reingest, never a migration.
+        - alert: KnowledgeIndexNeverBuilt
+          # knowledge_index_age_seconds exists only after a corpus's FIRST
+          # clean sweep, so KnowledgeIndexStale is blind to a corpus that was
+          # never built — a fresh PVC, a newly registered corpus, an executor
+          # whose token never worked (review-caught). knowledge_docs exists
+          # per corpus from boot: docs series without an age series = never
+          # swept. Same 48h as the stale threshold, so the merge-day first
+          # reingest never pages. As-built addition to spec §9's three rules.
+          expr: >-
+            knowledge_docs{namespace="knowledge-mcp"}
+            unless on(namespace, corpus) knowledge_index_age_seconds{namespace="knowledge-mcp"}
+          for: 48h
+          labels:
+            severity: warning
+          annotations:
+            summary: "a registered knowledge corpus has never completed a clean reingest"
+            description: >-
+              The corpus is registered (knowledge_docs exists) but no clean
+              sweep has ever recorded index_as_of. Run the first reingest
+              (docs/runbooks/knowledge-mcp.md "First run"), or — once the
+              nightly knowledge-reingest job exists — check its executor
+              token and job status.
         - alert: KnowledgeIndexStale
           expr: knowledge_index_age_seconds{namespace="knowledge-mcp"} > 172800
           for: 15m

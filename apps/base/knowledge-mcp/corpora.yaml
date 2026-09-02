@@ -14,8 +14,9 @@ corpora:
     # notes — a conversational exfiltration fence, not a v1 shortcut.
     visibility: operator
     trust: operator-authored
-    # ingest hard-rejects any uri outside these prefixes (https, trailing
-    # slash, canonical form, >=4 path segments — all machine-checked).
+    # Registry admission checks these at parse time (https, trailing slash,
+    # canonical form, >=4 path segments); ingest then hard-rejects any uri
+    # outside them at call time (canonicalized first, redirects refused).
     allowed_uri_prefixes:
       - https://raw.githubusercontent.com/BennettDixon/managed-k3s-homelab/main/docs/
       - https://raw.githubusercontent.com/BennettDixon/managed-k3s-homelab/main/proxmox/
