@@ -17,12 +17,17 @@ task_types:
     # Scheduled freshness for knowledge-mcp (knowledge spec §6). The n8n
     # executor's ONLY action is one MCP `reingest` call with the scoped
     # n8n-reingest token — it fetches nothing, parses nothing, holds no
-    # content; n8n compromise buys "re-index the public repo". budget_cap
-    # is 0 by contract (no model spend exists on this path). Idempotent by
-    # construction: reingest is sha-keyed, a re-run redoes only what failed.
+    # content; n8n compromise buys "re-index the public repo". Callers send
+    # budget_cap: 0 (the executor can spend nothing regardless — no model
+    # path exists) and artifacts_out: [] (the executor reports no artifacts,
+    # so any declared one fails the job as artifacts_missing). Idempotent by
+    # construction: reingest re-fetches every doc and re-indexes only what
+    # changed (sha-keyed). timeout_s stays ABOVE the executor's own HTTP
+    # timeout (150 s in the workflow) so a slow GitHub night fails inside n8n
+    # with a visible execution error instead of an orphaned execution.
     executor: n8n
     webhook_path: jobs/knowledge-reingest
-    timeout_s: 120
+    timeout_s: 180
     max_attempts: 3
     idempotent: true
     frontend_allowed: false
