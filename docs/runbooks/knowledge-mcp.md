@@ -9,8 +9,10 @@ Endpoint: `http://knowledge-mcp/mcp` (tailnet-only; one bearer per caller id).
 
 The apps chain uses `wait: true` + `dependsOn`, so ONE unready knowledge-mcp
 object (an ExternalSecret that cannot sync, a pod that cannot pull its image,
-a registry that fails readiness) freezes reconciliation cluster-wide. Do NOT
-merge the manifests PR until ALL of these exist:
+a registry that fails readiness) leaves the `apps` Kustomization NotReady on
+a ~7 min retry cycle for as long as the gate is missed: everything else
+under apps/homelab-prod slows to that cadence and `infra-network`, which
+depends on it, waits. Do NOT merge the manifests PR until ALL of these exist:
 
 1. **The two AWS SM entries — terraform-managed** (`terraform/main.tf`): set
    the four `knowledge_*` values in `terraform.tfvars` (template:
@@ -60,6 +62,9 @@ hash-roll the Deployment (Recreate: seconds of downtime, never two writers).
 Rollback = revert the tag commit — migrations are additive-only, the DB
 reopens. A rollback across a chunker-version bump re-chunks every doc at
 boot from stored content (no network); the startup probe allows 2 minutes.
+If boot dies mid-re-chunk (the one write on a boot path — a full node disk
+is the realistic cause) the pod crash-loops rather than degrading: free
+disk; each doc's re-chunk is its own transaction, so progress is kept.
 
 ## First run after merge
 
@@ -72,7 +77,9 @@ boot from stored content (no network); the startup probe allows 2 minutes.
    entry missing (kubelet pulls anonymously without the secret);
    `CreateContainerConfigError` = gate 1's token map missing;
    `0/1 Running` + `kubectl -n knowledge-mcp logs deploy/knowledge-mcp |
-   grep registry_parse_failed` = gate 3.
+   grep registry_parse_failed` = gate 3. After fixing a gate-1 miss
+   post-merge, ESO's error backoff can take ~17 min to retry — annotate the
+   ExternalSecret with `force-sync=$(date +%s)` to shortcut it.
 2. **Probes over the tailnet** (once Ready): `curl http://knowledge-mcp/healthz`
    and `/readyz` → `{"ok":true}`.
 3. **First reingest** — the index starts EMPTY; search returns nothing until

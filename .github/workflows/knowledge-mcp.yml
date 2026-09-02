@@ -12,7 +12,7 @@ on:
       - "proxmox/**/*.md"
       # The deployed registry is validated under the service's admission
       # rules (eval/registry-manifest.test.ts): a malformed corpora.yaml
-      # would fail readiness and freeze the Flux apps chain.
+      # would fail readiness and stall the Flux apps Kustomization.
       - "apps/base/knowledge-mcp/corpora.yaml"
       - ".github/workflows/knowledge-mcp.yml"
   pull_request:
@@ -22,7 +22,7 @@ on:
       - "proxmox/**/*.md"
       # The deployed registry is validated under the service's admission
       # rules (eval/registry-manifest.test.ts): a malformed corpora.yaml
-      # would fail readiness and freeze the Flux apps chain.
+      # would fail readiness and stall the Flux apps Kustomization.
       - "apps/base/knowledge-mcp/corpora.yaml"
       - ".github/workflows/knowledge-mcp.yml"
 

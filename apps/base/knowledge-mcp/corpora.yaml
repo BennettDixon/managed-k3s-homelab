@@ -1,7 +1,7 @@
 # Corpus + caller registry (spec §4). Repo-owned; shipped via
 # configMapGenerator so any change hash-rolls the Recreate Deployment. Parse
-# failure fails READINESS (not the process) — which would freeze the Flux apps
-# chain (wait: true), so CI validates THIS file under the service's own
+# failure fails READINESS (not the process) — which stalls the Flux `apps`
+# Kustomization (wait: true), so CI validates THIS file under the service's own
 # admission rules (services/knowledge-mcp/eval/registry-manifest.test.ts).
 # Public-repo safe by construction: GitHub URLs of this public repo only,
 # MagicDNS shortnames only, never ts.net FQDNs or LAN addresses.
