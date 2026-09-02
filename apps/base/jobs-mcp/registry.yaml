@@ -13,3 +13,24 @@ task_types:
     payload_schema:
       type: object
       additionalProperties: false
+  knowledge-reingest:
+    # Scheduled freshness for knowledge-mcp (knowledge spec §6). The n8n
+    # executor's ONLY action is one MCP `reingest` call with the scoped
+    # n8n-reingest token — it fetches nothing, parses nothing, holds no
+    # content; n8n compromise buys "re-index the public repo". budget_cap
+    # is 0 by contract (no model spend exists on this path). Idempotent by
+    # construction: reingest is sha-keyed, a re-run redoes only what failed.
+    executor: n8n
+    webhook_path: jobs/knowledge-reingest
+    timeout_s: 120
+    max_attempts: 3
+    idempotent: true
+    frontend_allowed: false
+    payload_schema:
+      type: object
+      additionalProperties: false
+      required: [corpus]
+      properties:
+        corpus:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{1,62}$"

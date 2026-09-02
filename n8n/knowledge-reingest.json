@@ -1,0 +1,197 @@
+{
+  "name": "knowledge-reingest",
+  "nodes": [
+    {
+      "id": "webhook-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jobs/knowledge-reingest",
+        "responseMode": "responseNode"
+      },
+      "webhookId": "3c2e14c3-95cc-5152-923d-3c3cdfe22be4"
+    },
+    {
+      "id": "code-1",
+      "name": "Verify And Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// First node MUST verify the shared secret (jobs-mcp spec §6, v1-mandatory).\n// The value lives in the LXC env (/etc/n8n/n8n.env), never in this JSON.\nconst req = $input.first().json;\nconst secret = $env.JOBS_WEBHOOK_SECRET;\nconst presented = (req.headers || {})['x-jobs-webhook-secret'];\nif (!secret || presented !== secret) {\n  return [{ json: { ok: false, error: { code: 'unauthorized', message: 'missing or invalid webhook secret' } } }];\n}\nconst body = req.body || {};\n// Defense in depth: jobs-mcp already validated payload against the registry\n// schema; re-check so an authenticated-but-forged call still cannot smuggle\n// an arbitrary string into the reingest argument.\nconst corpus = String((body.payload || {}).corpus ?? '');\nif (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(corpus)) {\n  return [{ json: { ok: false, error: { code: 'E_SCHEMA', message: 'payload.corpus is required and must be a corpus name' } } }];\n}\n// The executor's ONLY action is one MCP tools/call of `reingest` (knowledge\n// spec §6): it fetches nothing and holds no content. The scoped n8n-reingest\n// token is attached by the HTTP node from $env.KNOWLEDGE_REINGEST_TOKEN.\nreturn [{ json: {\n  ok: true, job_id: body.job_id ?? null, attempt: body.attempt ?? null, corpus,\n  rpc: { jsonrpc: '2.0', id: String(body.job_id ?? 'manual'), method: 'tools/call', params: { name: 'reingest', arguments: { corpus } } },\n} }];"
+      }
+    },
+    {
+      "id": "if-1",
+      "name": "Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "http-1",
+      "name": "Call reingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://knowledge-mcp/mcp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.KNOWLEDGE_REINGEST_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json, text/event-stream"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rpc) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "code-2",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Turn the MCP reply into the jobs-mcp completion report (jobs spec §6).\n// Streamable HTTP answers tools/call as SSE (\"event: message\\ndata: {...}\");\n// a plain JSON body is handled the same way.\nconst res = $input.first().json; // fullResponse: {data|body, headers, statusCode}\n// n8n's HTTP node (v4, fullResponse + text) files the body under `data`\n// (its outputPropertyName default); `body` is checked as a fallback.\nconst raw = res.data ?? res.body;\nconst text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? '');\nlet payload = null;\nfor (const line of text.split(/\\r?\\n/)) if (line.startsWith('data:')) payload = line.slice(5).trim();\nif (payload === null) payload = text.trim();\nlet rpc = null;\ntry { rpc = JSON.parse(payload); } catch {}\nconst fail = (code, message) => [{ json: { ok: false, error: { code, message: String(message).slice(0, 200) } } }];\nif (res.statusCode !== 200 || !rpc) return fail('knowledge_http_error', `knowledge-mcp returned ${res.statusCode}`);\nif (rpc.error) return fail('knowledge_rpc_error', rpc.error.message ?? 'rpc error');\nlet tool = null;\ntry { tool = JSON.parse(rpc.result?.content?.[0]?.text ?? ''); } catch {}\nif (!tool) return fail('knowledge_bad_response', 'unparseable tool result');\nif (rpc.result?.isError) return fail(tool.code ?? 'E_INTERNAL', tool.message ?? 'tool error');\n// Clean-sweep rule (knowledge spec §6): per-doc errors mean index_as_of did\n// NOT advance — report the attempt failed so jobs-mcp retries (reingest is\n// sha-keyed, so the retry only redoes what failed) and the job state shows it.\nif (Array.isArray(tool.errors) && tool.errors.length > 0) {\n  return fail('reingest_partial', `${tool.errors.length} document(s) failed: ${tool.errors.map((e) => e.code).join(',')}`);\n}\nreturn [{ json: {\n  ok: true,\n  result: { corpus: tool.corpus, source_ref: tool.source_ref, indexed: tool.indexed, unchanged: tool.unchanged, tombstoned: tool.tombstoned },\n  artifacts: [],\n  spent_usd: 0,\n} }];"
+      }
+    },
+    {
+      "id": "respond-1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "respondWith": "firstIncomingItem"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify And Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify And Build": {
+      "main": [
+        [
+          {
+            "node": "Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authorized?": {
+      "main": [
+        [
+          {
+            "node": "Call reingest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call reingest": {
+      "main": [
+        [
+          {
+            "node": "Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
