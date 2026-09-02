@@ -15,3 +15,23 @@ spec:
   install:
     remediation:
       retries: 3
+  upgrade:
+    # Without this a failed upgrade sticks at UpgradeFailed and freezes the
+    # apps Kustomization (wait: true) until a human intervenes.
+    remediation:
+      retries: 3
+  values:
+    # k3s embeds kube-proxy/scheduler/controller-manager in the server
+    # process — there are no separate endpoints to scrape, so the chart's
+    # default monitors made KubeProxyDown/KubeSchedulerDown/
+    # KubeControllerManagerDown fire permanently. Disabling the component
+    # monitors removes the scrape targets AND their default rules.
+    # Alert RECEIVER wiring is deliberately NOT here: this base also ships to
+    # apps/development, and the receiver config + its secret mount are
+    # prod-only (apps/homelab-prod/kube-prometheus-stack-values.yaml).
+    kubeProxy:
+      enabled: false
+    kubeScheduler:
+      enabled: false
+    kubeControllerManager:
+      enabled: false

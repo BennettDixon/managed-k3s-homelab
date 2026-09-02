@@ -174,6 +174,12 @@ variable "jobs_mcp_n8n_api_key" {
   sensitive   = true
 }
 
+variable "alerts_webhook_secret" {
+  description = "Alertmanager -> n8n alerts webhook bearer credential"
+  type        = string
+  sensitive   = true
+}
+
 variable "jobs_harbor_docker_pull_username" {
   description = "Full Harbor robot name for jobs project pulls (robot$jobs+...)"
   type        = string

@@ -38,7 +38,17 @@ N8N_PORT=5678
 N8N_SECURE_COOKIE=false
 N8N_EDITOR_BASE_URL=http://n8n:5678/
 WEBHOOK_URL=http://n8n:5678/
+N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+JOBS_WEBHOOK_SECRET=<from terraform.tfvars jobs_mcp_webhook_secret>
+ALERTS_WEBHOOK_SECRET=<from terraform.tfvars alerts_webhook_secret>
 ```
+
+`N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is deliberate (it matches the n8n
+default, but the posture deserves stating): workflow Code nodes read `$env`
+to verify webhook shared secrets. The flip side: anyone who can author or
+edit a workflow here — the operator, the workbench API key, and the
+cluster-synced jobs-mcp API key — can read this whole env file, both
+webhook secrets included. One trust domain, on purpose.
 
 `N8N_SECURE_COOKIE=false` because the UI is served over plain HTTP; the
 transport is the tailnet (WireGuard) — TLS here would be theater against the
