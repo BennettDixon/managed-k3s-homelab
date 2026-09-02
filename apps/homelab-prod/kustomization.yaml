@@ -9,6 +9,9 @@ resources:
   - ../base/tailscale
   - ../base/personal-site
   - ../base/jobs-mcp
+  # Prod-only on purpose (spec §8): in-base ExternalSecrets — never in
+  # apps/development.
+  - ../base/knowledge-mcp
 patches:
   - path: harbor-values.yaml
     target:

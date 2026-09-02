@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: knowledge-mcp-data
+  namespace: knowledge-mcp
+spec:
+  # The index is a CACHE (spec §1): everything on this volume rebuilds from
+  # the corpus's declared rebuild_source (git, under a minute) with one
+  # `reingest` call. No backup, no cross-site replication, single-site by
+  # design; losing it costs a reingest, never data.
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

@@ -3,7 +3,7 @@
 Rolling status of the personal-cloud buildout. Updated at the end of every working
 session. Tailnet MagicDNS names only — no LAN IPs or site details in this file.
 
-_Last updated: 2026-09-01_
+_Last updated: 2026-09-02_
 
 ## Standing infrastructure
 
@@ -116,6 +116,47 @@ Findings to know about (none block work, all pre-existing):
   for `jobs-mcp-data` labeled `namespace="default"` (no such PVC/pod exists);
   alert rules scope `namespace="jobs-mcp"` and are immune.
 
+## Pulse check (2026-09-02, session start)
+
+All inherited-stack checks green: jobs-mcp `healthz`/`readyz` 200 over the
+tailnet; smoke-heartbeat `enqueue → succeeded` (attempts:1, ~300 ms through
+the n8n bridge); knowledge-mcp and manifests CI both green on `main`; a
+synthetic alert `Alertmanager → n8n` ran as a successful `alerts-webhook`
+execution (Telegram leg is the operator's confirmation); all 8 Flux
+kustomizations Ready at `main`; three gateways online and advertising —
+`tailscale-gw` primary for the compute subnet, `tailscale-gw2` standby with
+the identical route approved, `tailscale-gw-edge` primary for the edge
+subnet; `jobs_bridge_up`=1 scraped.
+
+Findings (none block work; all pre-existing):
+
+- **Node disk 72.7% by the alert's own ratio** (kubelet used/capacity:
+  71.1 of 97.9 GiB — flat since 09-01's 73%; node-exporter's avail-based
+  view says 77.8% because it counts ext4 reserved blocks). Not imminent,
+  but the headroom is the image filesystem: 29.2 GiB of container images,
+  Prometheus TSDB 3.5 GiB, the rest local-path PVC data (Harbor registry,
+  phyt-system timescaledb). Kubelet's own image GC only starts at 85%,
+  above the 80% alert. Remedy when it matters is an operator call
+  (destructive): prune unused images on the node (`k3s crictl rmi
+  --prune`) and review the Harbor registry share.
+- **Harbor admin password drift**: the AWS SM value
+  (`k3s_harbor_admin_password`, synced into the `harbor-admin-password`
+  secret) no longer matches the live admin login (401) — the chart reads
+  `existingSecretAdminPassword` at install only and the password was
+  changed in the UI since. Admin API access is therefore not
+  reconstructable from terraform. Workaround used this session: the
+  `knowledge` project was created through the API as the operator's
+  `docker-push` user (scripted from the Docker credential store — the
+  password never touched a command line; creator = project admin, demoted
+  to maintainer afterwards, `bennett` added as project admin). Fix is the
+  operator's: reset the admin password to the SM value, or put the live
+  value into SM (targeted apply).
+- **AWS SSO session expired** at session start: the targeted terraform
+  apply for the knowledge secrets waits on an operator `aws sso login`.
+- **Golden eval blind spot closing**: an `expect_miss` query ("how much
+  does it cost to run a job") now hits — promote it in
+  `services/knowledge-mcp/eval/golden.yaml` (improvement, not failure).
+
 ## Parked (deliberate, not forgotten)
 - **~~knowledge-mcp vector store~~ — DECIDED 2026-09-02** (spec
   `docs/specs/knowledge-mcp.md` §1, panel + adversarial critique):
@@ -195,16 +236,23 @@ is the operator's call:
 
 ## Next session starts with
 
-- **knowledge-mcp slice 2** (after PR #7 merges): manifests + secrets +
-  registry ConfigMap, MERGE GATE per spec §8 (SM entry
-  `k3s_knowledge_mcp_caller_tokens` via targeted terraform apply, Harbor
-  `knowledge` project + pull robot + image pushed from the workbench,
-  base joins apps/homelab-prod ONLY — never apps/development).
-- **knowledge-mcp slice 3**: `knowledge-reingest` jobs-mcp task_type +
-  n8n workflow + scoped `n8n-reingest` token + end-to-end proof.
-- **Operator one-timers**: merge PRs #6/#7; attach the terminal
-  notification channel in the n8n UI (Parked entry); the two task chips.
-- Still open from build order item 1: storage classes + site labels.
+- **knowledge-mcp slice 2 — PR'd 2026-09-02** (`feat/knowledge-mcp-slice-2`,
+  adversarial review round 1 applied). Open gate item before merge: the
+  TARGETED terraform apply of the two SM entries (values ready in the
+  local tfvars; waits on the operator's SSO login). Done already: Harbor
+  `knowledge` project + pull robot, image `0.1.0` pushed, registry
+  validated in CI, image proven read-only/non-root. After merge: pod Ready
+  → first operator `reingest` → search hits → metrics scraped (runbook
+  "First run").
+- **knowledge-mcp slice 3 — stacked PR** (`feat/knowledge-mcp-slice-3`):
+  `knowledge-reingest` task_type + executor (imported on n8n, ACTIVE,
+  proven against a local instance) + nightly trigger (imported INACTIVE —
+  the jobs-bearer-in-n8n decision is the operator's, runbook "Scheduled
+  freshness"). End-to-end proof after both merges: enqueue → reingest →
+  index_as_of advances.
+- Still open from build order item 1: storage classes + site labels; the
+  two spun-off chips (external-secrets IAM under terraform; jobs-mcp
+  bridge-gauge idle-blindness probe).
 
 ## Decisions log
 

@@ -55,3 +55,27 @@ claude mcp add --transport http --scope user jobs-mcp http://jobs-mcp/mcp \
 update the env). Tools: `enqueue` (budget_cap REQUIRED, 0 = no model spend),
 `status`, `artifacts`, `cancel` (queued jobs only). Contract:
 `docs/specs/jobs-mcp.md` §3.
+
+## knowledge-mcp
+
+The retrieval service (manifests slice 2, 2026-09-02) — registered on the
+`bennett` workbench account as a streamable-HTTP server with the OPERATOR
+caller token:
+
+```bash
+claude mcp add --transport http --scope user knowledge-mcp http://knowledge-mcp/mcp \
+  --header 'Authorization: Bearer ${KNOWLEDGE_MCP_TOKEN}'
+```
+
+`KNOWLEDGE_MCP_TOKEN` lives in `~/.zshenv` (the `operator` entry of the
+caller-token map — terraform var `knowledge_mcp_operator_token`; rotate in
+tfvars → targeted apply → pod restart → update the env, see
+`docs/runbooks/knowledge-mcp.md`). Never paste the literal token into
+`claude mcp add`: it would land in shell history AND in plaintext
+`~/.claude.json`. Keep the single-quoted `${KNOWLEDGE_MCP_TOKEN}` reference;
+a 401 from the server usually means the variable was unset when the MCP
+server started (`echo ${KNOWLEDGE_MCP_TOKEN:+set}`). Tools: `search`, `fetch`, `ingest`,
+`reingest`, `list_corpora` (spec §3). The `agent` account gets its own caller
+id (one more map key + `callers:` line) rather than the operator token when
+it needs access; NanoClaw is never registered against this token — it gets a
+`frontend`-class id and a curated corpus (spec SIGN-OFF 3).

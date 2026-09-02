@@ -1,0 +1,93 @@
+# Alerts per spec §9. Delivery: Alertmanager -> n8n webhook receiver -> the
+# operator's terminal channel (docs/runbooks/alerts.md).
+#
+# Deliberately NO node-filesystem alert here: under local-path the
+# kubelet_volume_stats series report the NODE root filesystem, jobs-mcp's
+# JobsPvcDiskFilling already owns that signal, and a clone would double-fire
+# at node-80%. Service-emitted knowledge_db_bytes is this service's share.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: knowledge-mcp
+  namespace: knowledge-mcp
+  labels:
+    # Without this label the default-valued kube-prometheus-stack silently
+    # ignores the rule — same trap as the ServiceMonitor (spec §9).
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: knowledge-mcp.rules
+      rules:
+        - alert: KnowledgeMcpMetricsAbsent
+          # Instant-vector alerts silently disarm when the series vanishes
+          # (Deployment gone/scaled to 0, Service label drift, monitor
+          # release-label lost). This guard fires precisely then; TargetDown
+          # covers scrape-failing, this covers target-gone. for: 10m absorbs
+          # Recreate-deploy staleness.
+          expr: absent(knowledge_db_bytes{namespace="knowledge-mcp"})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "knowledge-mcp metrics have vanished from Prometheus"
+            description: >-
+              No knowledge_db_bytes series exists: the knowledge-mcp scrape
+              target is gone (not merely failing — TargetDown covers that).
+              Check the Deployment, the Service's app label, and the
+              ServiceMonitor's release label. While this fires, every other
+              knowledge-mcp alert is blind.
+        - alert: KnowledgeDbOversized
+          expr: knowledge_db_bytes{namespace="knowledge-mcp"} > 0.8 * 1073741824
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "knowledge.db exceeds 80% of the PVC's nominal 1Gi"
+            description: >-
+              local-path never enforces the 1Gi claim, so the DB crossing
+              ~820MB means corpus volume has outgrown v1 assumptions by
+              three orders of magnitude (corpus #1: 10 docs / 83 chunks,
+              well under 1MiB; the gauge is the main file — the WAL is
+              bounded by auto-checkpoint). Ingest would start failing
+              cleanly on a full node disk while search keeps serving (spec
+              §8). Investigate which corpus grew before the node disk pays
+              for it; the index is a cache, so the remedy is a registry
+              change + reingest, never a migration.
+        - alert: KnowledgeIndexNeverBuilt
+          # knowledge_index_age_seconds exists only after a corpus's FIRST
+          # clean sweep, so KnowledgeIndexStale is blind to a corpus that was
+          # never built — a fresh PVC, a newly registered corpus, an executor
+          # whose token never worked (review-caught). knowledge_docs exists
+          # per corpus from boot: docs series without an age series = never
+          # swept. Same 48h as the stale threshold, so the merge-day first
+          # reingest never pages. As-built addition to spec §9's three rules.
+          expr: >-
+            knowledge_docs{namespace="knowledge-mcp"}
+            unless on(namespace, corpus) knowledge_index_age_seconds{namespace="knowledge-mcp"}
+          for: 48h
+          labels:
+            severity: warning
+          annotations:
+            summary: "a registered knowledge corpus has never completed a clean reingest"
+            description: >-
+              The corpus is registered (knowledge_docs exists) but no clean
+              sweep has ever recorded index_as_of. Run the first reingest
+              (docs/runbooks/knowledge-mcp.md "First run"), or — once the
+              nightly knowledge-reingest job exists — check its executor
+              token and job status.
+        - alert: KnowledgeIndexStale
+          expr: knowledge_index_age_seconds{namespace="knowledge-mcp"} > 172800
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a knowledge corpus has not completed a clean reingest in 2 days"
+            description: >-
+              index_as_of advances ONLY on a clean sweep (spec §6), so this
+              means the nightly knowledge-reingest job has been failing or
+              not running for two days: per-doc fetch errors
+              (knowledge_ingest_errors_total by code), GitHub unreachable
+              from the pod, jobs-mcp/n8n not dispatching it, or the executor
+              token rotated without the n8n env following. Search keeps
+              serving the last good index. Checklist:
+              docs/runbooks/knowledge-mcp.md "Reingest failing".

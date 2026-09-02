@@ -1,0 +1,31 @@
+# Corpus + caller registry (spec §4). Repo-owned; shipped via
+# configMapGenerator so any change hash-rolls the Recreate Deployment. Parse
+# failure fails READINESS (not the process) — which stalls the Flux `apps`
+# Kustomization (wait: true), so CI validates THIS file under the service's own
+# admission rules (services/knowledge-mcp/eval/registry-manifest.test.ts).
+# Public-repo safe by construction: GitHub URLs of this public repo only,
+# MagicDNS shortnames only, never ts.net FQDNs or LAN addresses.
+corpora:
+  homelab-notes:
+    description: "repo docs/ + proxmox/ operational notes"
+    rebuild_source: git
+    # SIGN-OFF 3: operator-only, permanently. NanoClaw is later served a
+    # deliberately curated corpus (e.g. homelab-faq), never these working
+    # notes — a conversational exfiltration fence, not a v1 shortcut.
+    visibility: operator
+    trust: operator-authored
+    # Registry admission checks these at parse time (https, trailing slash,
+    # canonical form, >=4 path segments); ingest then hard-rejects any uri
+    # outside them at call time (canonicalized first, redirects refused).
+    allowed_uri_prefixes:
+      - https://raw.githubusercontent.com/BennettDixon/managed-k3s-homelab/main/docs/
+      - https://raw.githubusercontent.com/BennettDixon/managed-k3s-homelab/main/proxmox/
+    tree_source: https://api.github.com/repos/BennettDixon/managed-k3s-homelab/git/trees/main
+    max_doc_bytes: 262144
+callers:
+  # Policy only — tokens live in the SM JSON map synced by
+  # knowledge-mcp-caller-tokens.yaml; both sides must agree (fail closed).
+  operator: { class: operator }
+  # The scheduled-reingest executor (slice 3): reingest + list_corpora on
+  # homelab-notes and nothing else. It fetches nothing, holds no content.
+  n8n-reingest: { class: reingest-bot, corpora: [homelab-notes] }

@@ -191,3 +191,28 @@ variable "jobs_harbor_docker_pull_password" {
   type        = string
   sensitive   = true
 }
+
+# knowledge-mcp secret values (never committed; set in terraform.tfvars)
+variable "knowledge_mcp_operator_token" {
+  description = "knowledge-mcp caller token for the operator class (workbench sessions)"
+  type        = string
+  sensitive   = true
+}
+
+variable "knowledge_mcp_n8n_reingest_token" {
+  description = "knowledge-mcp caller token for the n8n reingest executor (reingest-bot class); same value lives in the n8n LXC env as KNOWLEDGE_REINGEST_TOKEN"
+  type        = string
+  sensitive   = true
+}
+
+variable "knowledge_harbor_docker_pull_username" {
+  description = "Full Harbor robot name for knowledge project pulls (robot$knowledge+...)"
+  type        = string
+  sensitive   = true
+}
+
+variable "knowledge_harbor_docker_pull_password" {
+  description = "Harbor robot secret for knowledge project pulls"
+  type        = string
+  sensitive   = true
+}
