@@ -18,6 +18,17 @@ series, 48h), because `knowledge_index_age_seconds` only exists after a
 corpus's first clean sweep and `KnowledgeIndexStale` is therefore blind to
 a never-built corpus; the pod runs with no projected SA token, a read-only
 root filesystem, and all capabilities dropped (first internet-fetching pod).
+**Slice 3 as-built (2026-09-02):** the `knowledge-reingest` task type and its
+n8n executor ship as specified (§6) and are the path for manual/ad-hoc runs;
+the NIGHTLY schedule, however, runs as a direct `reingest` call from an n8n
+Schedule trigger with the reingest-bot token n8n already holds
+(`n8n/knowledge-reingest-direct.json`) — **[SIGN-OFF 5]** operator decision:
+riding the jobs envelope nightly would put jobs-mcp's single v1 bearer into
+the n8n env (the whole jobs surface to every workflow author there). The
+queue-shaped scheduler is exported (`knowledge-reingest-nightly.json`),
+imported inactive, and becomes the nightly path once jobs-mcp has
+per-caller tokens (its NanoClaw retrofit) with a caller allowed only
+`enqueue knowledge-reingest`.
 
 **README paragraph (repo convention):** `knowledge-mcp` is the retrieval MCP
 service of the personal cloud. It answers `search` and `fetch` over registered

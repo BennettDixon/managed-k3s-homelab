@@ -215,31 +215,35 @@ budget_cap: 0, artifacts_out: []}` → `status(id)` reaches `succeeded` with
 
 ## Scheduled freshness (nightly)
 
-`n8n/knowledge-reingest-nightly.json` enqueues one `knowledge-reingest` job
-per day at 03:30 instance time (day-keyed `idempotency_key`: a re-fired
-trigger is a replay, never a second run; the executor is idempotent anyway).
-It needs the jobs-mcp bearer in the n8n env as `JOBS_MCP_BEARER_TOKEN`.
-That hands n8n — and every workflow author on it, since Code nodes read
-`$env` — the WHOLE jobs-mcp v1 tool surface: enqueue any task_type (the cap
-is per job only), read every job's result/error, cancel queued jobs. Nil
-today (n8n already is the only executor and holds `JOBS_WEBHOOK_SECRET`);
-real the day a worker or gateway executor lands. The workflow is therefore
-imported INACTIVE; arming it is an explicit operator decision. Prefer, in
-order: (1) a Schedule trigger calling knowledge-mcp `reingest` directly with
-the reingest-bot token n8n already holds — zero new secrets; it loses only
-the job row (a spec §6 deviation, so it needs the operator's sign-off;
-failure visibility is unchanged: `KnowledgeIndexStale` + n8n execution
-history); (2) once jobs-mcp has per-caller tokens (its NanoClaw retrofit),
-an `n8n-nightly` caller allowed only `enqueue knowledge-reingest`; (3) arm
-this workflow as-is: add `JOBS_MCP_BEARER_TOKEN` to `/etc/n8n/n8n.env`,
-restart n8n, execute the workflow ONCE from the editor and confirm it prints
-a `job_id` (the trigger has never run — its enqueue path is verified only by
-review harness), then activate. A CronJob holding the operator bearer is the
-same credential in a second namespace, not an improvement. Either way,
-manual enqueue after doc-heavy merges is always available from any jobs-mcp
-client (the same envelope as above). Failure visibility: an unsuccessful enqueue errors the
-n8n execution; a reingest that keeps failing surfaces as
-`KnowledgeIndexStale` within two days.
+**Decided 2026-09-02 (operator): direct schedule now, queue-shaped scheduler
+when jobs-mcp has per-caller tokens.**
+
+- **Live path — `n8n/knowledge-reingest-direct.json`** (ACTIVE): a Schedule
+  trigger at 03:30 instance time calls knowledge-mcp `reingest` for
+  `homelab-notes` with the scoped `n8n-reingest` token n8n already holds
+  (`$env.KNOWLEDGE_REINGEST_TOKEN`). Zero new secrets, no inbound surface.
+  Anything but a clean sweep throws, so the execution shows red in n8n;
+  sustained failure surfaces as `KnowledgeIndexStale` within two days.
+  What it gives up: the jobs-mcp job row (spec §6's "rides the jobs
+  envelope") — accepted by sign-off because the alternative is the v1 jobs
+  bearer in the n8n env, which hands n8n (and every workflow author on it,
+  since Code nodes read `$env`) the whole jobs-mcp surface: enqueue any
+  task_type, read every job's result/error, cancel queued jobs.
+- **Queue-shaped path — `n8n/knowledge-reingest-nightly.json`** (imported,
+  INACTIVE): enqueues the `knowledge-reingest` task on jobs-mcp. Re-arm it
+  ONLY when jobs-mcp has per-caller tokens (its NanoClaw retrofit): mint an
+  `n8n-nightly` caller allowed just `enqueue knowledge-reingest`, put that
+  token in the n8n env as `JOBS_MCP_BEARER_TOKEN`, execute the workflow once
+  from the editor and confirm a `job_id`, activate it, then deactivate the
+  direct one. Never the v1 operator bearer.
+- **Manual runs** stay available any time: `enqueue {task_type:
+  "knowledge-reingest", payload: {corpus: "homelab-notes"}, budget_cap: 0,
+  artifacts_out: []}` from any jobs-mcp client (visible as a job), or the
+  operator's own `reingest` call (First run, above).
+- **Verify the direct schedule**: n8n → Executions → `knowledge-reingest-direct`
+  succeeded overnight with `source_ref` = the current `main`; knowledge-mcp
+  `list_corpora` → `index_as_of.commit` equal to it;
+  `knowledge_index_age_seconds` under a day in Prometheus.
 
 ## Rebuild from scratch (PVC lost)
 

@@ -1,0 +1,127 @@
+{
+  "name": "knowledge-reingest-direct",
+  "nodes": [
+    {
+      "id": "schedule-1",
+      "name": "Nightly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 3 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "code-1",
+      "name": "Build",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Nightly freshness, direct shape (knowledge spec §6 as-built, operator\n// decision 2026-09-02): call knowledge-mcp `reingest` with the scoped\n// reingest-bot token n8n already holds — zero new secrets. The jobs-mcp\n// `knowledge-reingest` task type stays for manual enqueues and becomes the\n// scheduler again once jobs-mcp has per-caller tokens.\nconst day = new Date().toISOString().slice(0, 10);\nreturn [{ json: { rpc: { jsonrpc: '2.0', id: `direct-${day}`, method: 'tools/call', params: { name: 'reingest', arguments: { corpus: 'homelab-notes' } } } } }];"
+      }
+    },
+    {
+      "id": "http-1",
+      "name": "Call reingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://knowledge-mcp/mcp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.KNOWLEDGE_REINGEST_TOKEN }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json, text/event-stream"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.rpc) }}",
+        "options": {
+          "timeout": 150000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "code-2",
+      "name": "Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Fail the execution loudly on anything but a CLEAN sweep (knowledge spec §6:\n// index_as_of advances only then). Sustained failure surfaces as\n// KnowledgeIndexStale; each failure is visible in n8n execution history.\nconst res = $input.first().json; // fullResponse: {data|body, headers, statusCode}\nconst raw = res.data ?? res.body;\nconst text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? '');\nlet payload = null;\nfor (const line of text.split(/\\r?\\n/)) if (line.startsWith('data:')) payload = line.slice(5).trim();\nif (payload === null) payload = text.trim();\nlet rpc = null;\ntry { rpc = JSON.parse(payload); } catch {}\nif (res.statusCode !== 200 || !rpc) throw new Error(`knowledge-mcp returned ${res.statusCode}${rpc && rpc.code ? ' ' + rpc.code : ''}`);\nif (rpc.error) throw new Error(`rpc error: ${String(rpc.error.message ?? '').slice(0, 200)}`);\nlet tool = null;\ntry { tool = JSON.parse(rpc.result?.content?.[0]?.text ?? ''); } catch {}\nif (!tool) throw new Error('unparseable tool result');\nif (rpc.result?.isError) throw new Error(`reingest failed: ${String(tool.code ?? 'E_INTERNAL')} ${String(tool.message ?? '').slice(0, 200)}`);\nif (Array.isArray(tool.errors) && tool.errors.length > 0) {\n  const named = tool.errors.slice(0, 5).map((e) => `${e.code} ${String(e.uri ?? '').split('/').slice(6).join('/')}`).join('; ');\n  throw new Error(`${tool.errors.length} document(s) failed (index_as_of not advanced): ${named}`);\n}\nreturn [{ json: { corpus: tool.corpus, source_ref: tool.source_ref, indexed: tool.indexed, unchanged: tool.unchanged, tombstoned: tool.tombstoned } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Nightly": {
+      "main": [
+        [
+          {
+            "node": "Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build": {
+      "main": [
+        [
+          {
+            "node": "Call reingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call reingest": {
+      "main": [
+        [
+          {
+            "node": "Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
