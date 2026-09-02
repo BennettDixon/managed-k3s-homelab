@@ -124,8 +124,9 @@ refreshes within 1h (or annotate the ExternalSecret with
 seconds; preferred over `rollout restart`, whose annotation Flux's SSA later
 strips for a second bounce). Then update every holder of the old value:
 workbench `~/.zshenv`, the n8n LXC env for `n8n-reingest`. There is a skew
-window either way; a stale executor fails loudly with `E_UNAUTHORIZED` and
-`KnowledgeIndexStale` surfaces it within two days. Adding a caller = a new
+window either way; a stale executor fails loudly (`knowledge-mcp returned
+401 E_UNAUTHORIZED` in the job's error message) and `KnowledgeIndexStale`
+surfaces it within two days. Adding a caller = a new
 map key (terraform) + a `callers:` line in `corpora.yaml` — the PR is where
 a human reads what they grant; a token whose id has no registry entry
 authenticates nobody.
@@ -153,11 +154,17 @@ secret shows up as `ImagePullBackOff` on the next deploy, never mid-run.
 2. `E_UNSUPPORTED: tree listing matched no documents while the corpus has
    live docs` = the circuit breaker: registry prefixes and the repo tree
    disagree (a renamed directory). Fix the registry; nothing was tombstoned.
-3. Nothing ran at all: `status(id)` of the last `knowledge-reingest` job
-   (`error.code`: `executor_http_error` = n8n/webhook unreachable,
-   `reingest_partial` = per-doc failures, `E_UNAUTHORIZED` in the message =
-   token skew between the SM map and the n8n env), then the nightly trigger's
-   n8n execution history. A manual operator `reingest` is always safe —
+3. Nothing ran at all: `status(id)` of the last `knowledge-reingest` job.
+   `state: failed` ⇒ `error.code` is always `retries_exhausted`; the
+   diagnosis is in `error.message`: `webhook returned 404` = workflow not
+   imported/active; `webhook returned 500` = the n8n execution errored
+   (read its log); `knowledge-mcp returned 401 E_UNAUTHORIZED` = token skew
+   between the SM map and the n8n env; `N document(s) failed: <code path>`
+   = per-doc failures (item 1). `state: queued` with `attempts > 0` = still
+   retrying (`error` holds the last attempt's own code). n8n unreachable
+   fails nothing: the job sits `queued` and `jobs_bridge_up` drops to 0
+   (jobs runbook "Bridge down"). Then the nightly trigger's own n8n
+   execution history. A manual operator `reingest` is always safe —
    idempotent, sha-keyed.
 4. GitHub unauthenticated API budget is 60 requests/hour per source IP; one
    reingest spends one tree call (raw fetches are not API calls). A 403 on
@@ -204,8 +211,11 @@ SECOND HOLDER of the operator credential. That widens n8n's blast radius from
 "run executors" (it already holds `JOBS_WEBHOOK_SECRET`) to "enqueue any
 task_type up to `MAX_BUDGET_CAP_USD`", which is nil today (deterministic
 task types only, no gateway spend) but grows with agentic executors. The
-workflow is therefore imported INACTIVE; arming it (env var + restart +
-activate) is an explicit operator decision. The alternative that keeps the
+workflow is therefore imported INACTIVE; arming it is an explicit operator
+decision: add `JOBS_MCP_BEARER_TOKEN` to `/etc/n8n/n8n.env`, restart n8n,
+execute the workflow ONCE from the editor and confirm it prints a `job_id`
+(the trigger has never run — its enqueue path is verified only by review
+harness), then activate. The alternative that keeps the
 bearer in-cluster is a CronJob in the knowledge-mcp namespace reading the
 same SM key through an ExternalSecret. Either way, manual enqueue after
 doc-heavy merges is always available from any jobs-mcp client (the same

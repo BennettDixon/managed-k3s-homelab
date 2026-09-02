@@ -1,0 +1,40 @@
+# jobs-mcp: typecheck + unit tests, including the deployed-registry guard
+# (test/registry-manifest.test.ts): apps/base/jobs-mcp/registry.yaml is parsed
+# under the service's own admission rules (strict Ajv) and every task_type
+# must ship its canonical n8n export — a bad entry otherwise fails readiness
+# on the pod and leaves the Flux apps Kustomization NotReady. Mirrors the
+# knowledge-mcp workflow (the repo's first working CI, 2026-09-02).
+name: jobs-mcp
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/jobs-mcp/**"
+      - "apps/base/jobs-mcp/registry.yaml"
+      - "n8n/*.json"
+      - ".github/workflows/jobs-mcp.yml"
+  pull_request:
+    paths:
+      - "services/jobs-mcp/**"
+      - "apps/base/jobs-mcp/registry.yaml"
+      - "n8n/*.json"
+      - ".github/workflows/jobs-mcp.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/jobs-mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # node 22, not 24: better-sqlite3@11 ships no Node-24 prebuilt
+          # (same constraint as the Dockerfile).
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/jobs-mcp/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
