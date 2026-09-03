@@ -159,7 +159,10 @@ Findings (none block work; all pre-existing):
   password never touched a command line; creator = project admin, demoted
   to maintainer afterwards, `bennett` added as project admin). Fix is the
   operator's: reset the admin password to the SM value, or put the live
-  value into SM (targeted apply).
+  value into SM (targeted apply). **RESOLVED 2026-09-03:** admin reset to
+  the SM value through the `harbor_user` row (recipe in
+  `apps/base/harbor/README.md`); terraform, Secrets Manager, the cluster
+  secret and Harbor agree again.
 - **AWS SSO session expired** at session start; after the operator's login
   the targeted apply ran clean (4 add / 0 change / 0 destroy) and #9 merged.
 - **Golden eval blind spot closing**: an `expect_miss` query ("how much
@@ -297,8 +300,8 @@ and the one remaining gate step are the operator's:
   two parked chips (external-secrets IAM identity under terraform;
   jobs-mcp bridge-gauge idle-blindness probe) or build-order item 1
   (storage classes + site labels).
-- Housekeeping from the pulse check: Harbor admin password drift, node
-  disk headroom; still parked: the dead-man's snitch on the Watchdog alert.
+- Housekeeping from the pulse check: node disk headroom; still parked: the
+  dead-man's snitch on the Watchdog alert.
 
 ## Decisions log
 
