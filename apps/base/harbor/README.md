@@ -64,3 +64,30 @@ openssl s_client -connect harbor.internal:443 -servername harbor.internal -CAfil
 The root lasts 10 years; cert-manager re-issues it at ~2/3 of that (~2033).
 When that happens (or if the `homelab-root-ca` secret is ever deleted and
 recreated), re-run the distribution script once.
+
+## Admin password recovery (drift from Secrets Manager)
+
+The chart consumes `existingSecretAdminPassword` at INSTALL time only, so a
+password changed in the UI later drifts from `k3s_harbor_admin_password`
+(terraform → Secrets Manager → `harbor-admin-password`) and the admin login
+is no longer reconstructable from state (found 2026-09-02, fixed
+2026-09-03). Recovery without any admin credential is a row update in
+Harbor's own database — the `harbor_user` table stores
+`pbkdf2_hmac(sha256, password, salt, 4096 iterations, 16-byte key)` as hex
+with `password_version = sha256`:
+
+1. Back up the row: `select user_id, password, salt, password_version from
+   harbor_user where username='admin'` via `kubectl -n harbor exec
+   harbor-database-0 -c database -- psql -U postgres -d registry`.
+2. Compute the hash of the Secrets Manager value with the EXISTING salt
+   (`python3 -c 'import hashlib,sys; print(hashlib.pbkdf2_hmac("sha256",
+   sys.argv[1].encode(), sys.argv[2].encode(), 4096, 16).hex())'` — read
+   the value from the cluster secret into a variable, never onto a command
+   line you type by hand).
+3. `update harbor_user set password='<hash>', password_version='sha256'
+   where user_id=1 and username='admin'`, then verify with
+   `curl -u admin https://harbor-ui.<tailnet>.ts.net/api/v2.0/users/current`
+   (200 + `sysadmin_flag: true`); restore the backup hash if it fails.
+
+Rotation is then the normal path: new value in `terraform.tfvars` →
+targeted apply → ExternalSecret refresh → the same row update.

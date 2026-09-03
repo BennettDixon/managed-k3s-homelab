@@ -42,13 +42,13 @@ depends on it, waits. Do NOT merge the manifests PR until ALL of these exist:
    The tag must equal the one in `apps/base/knowledge-mcp/deployment.yaml`.
    Use the `docker`-driver builder: `docker-container` builders push from
    inside BuildKit, which does not trust the homelab root CA.
-   Harbor's admin login is NOT the SM value any more (STATUS finding
-   2026-09-02): create projects/robots in the UI as `bennett`. If scripting
-   it instead, authenticate as the docker-push user with `curl -u docker-push`
-   (password prompted) or `--netrc` — never a password on a command line —
-   and demote the creator from project admin to maintainer afterwards. The
-   robot secret is shown ONCE at creation: capture it straight into
-   `terraform.tfvars`.
+   Harbor's admin login matches the SM value again since 2026-09-03 (it
+   had drifted; recovery recipe in `apps/base/harbor/README.md`). Create
+   projects/robots in the UI as `bennett`/`admin`, or via the API with
+   `curl -u <user>` (password prompted) or `--netrc` — never a password on a
+   command line — and, if a non-admin user created the project, demote it
+   from project admin to maintainer afterwards. The robot secret is shown
+   ONCE at creation: capture it straight into `terraform.tfvars`.
 3. **Registry parseable**: `apps/base/knowledge-mcp/corpora.yaml` passes the
    service's admission rules. CI runs `eval/registry-manifest.test.ts`
    against the real file on every PR touching it; locally `npm run eval` in
