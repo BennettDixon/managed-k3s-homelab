@@ -153,6 +153,7 @@ services/jobs-mcp/                                 # source + Dockerfile
 
 - **Logs:** structured JSON to stdout, one line per enqueue and transition (`job_id, task_type, from, to, attempt, latency_ms, error`) — never payload contents. Shipped, not tailed.
 - **Metrics:** `GET /metrics` + ServiceMonitor **labeled `release: kube-prometheus-stack`** (without it the default-valued stack silently ignores it): `jobs_state_count{state,task_type}`, `jobs_enqueued_total{task_type}`, `jobs_transitions_total{from,to}`, `jobs_dispatch_duration_seconds{task_type}`, `jobs_bridge_up`, `jobs_queue_oldest_age_seconds`, `jobs_db_bytes`. Starter alerts: `jobs_bridge_up == 0` for 10 min; PVC > 80%.
+- **Idle bridge probe (as-built):** `jobs_bridge_up` is event-driven — a real dispatch is its only writer — so on an idle queue a bridge that dies (or recovers) would go unseen until work arrives. A periodic connection-level probe (`BRIDGE_PROBE_INTERVAL_MS`, default 60s, `0` disables) refreshes the gauge even when idle. It is a bare `GET {N8N_BASE_URL}` — **never a `/webhook/…` path, so it can never trigger an executor workflow** — where any HTTP response (404 included) means "reachable at the connection level" ⇒ up, and only a network error/timeout is down. It reuses the dispatcher's own bridge accounting and backoff, and yields to any real dispatch in flight so the two never race the gauge.
 
 ## 10. Failure matrix (what the design guarantees)
 
