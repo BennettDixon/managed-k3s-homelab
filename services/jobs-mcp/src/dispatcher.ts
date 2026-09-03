@@ -32,6 +32,13 @@ const MAX_RESULT_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_MANIFEST_ENTRIES = 64;
 
+// The idle probe (spec §9) uses a short connection timeout: a reachable n8n
+// answers its base URL near-instantly, so once this elapses the connection
+// never came up — which for a connection-level check IS "bridge down". Kept
+// well under any executor timeout_s, and the probe yields the claim loop only
+// while a probe is actually in flight, so its impact on dispatch is negligible.
+const BRIDGE_PROBE_TIMEOUT_MS = 10_000;
+
 // Read a response body with a hard byte cap; null means "over cap".
 async function readBodyCapped(res: Response, cap: number): Promise<string | null> {
   const declared = Number(res.headers.get("content-length"));
@@ -78,6 +85,11 @@ export class Dispatcher {
   private bridgeFailures = 0;
   private bridgeBackoffUntil = 0;
   private timer: NodeJS.Timeout | null = null;
+  private probeTimer: NodeJS.Timeout | null = null;
+  // True only while an idle probe's connection check is in flight. tick()
+  // refuses to claim while it is set, so a real dispatch can never start mid-
+  // probe — the two never race the shared bridge accounting (below).
+  private probing = false;
   private fetchImpl: typeof fetch;
   private log: (line: Record<string, unknown>) => void;
 
@@ -96,6 +108,15 @@ export class Dispatcher {
   start(intervalMs = 500): void {
     this.timer = setInterval(() => this.tick(), intervalMs);
     this.timer.unref();
+    // Idle-blindness probe (spec §9): refresh jobs_bridge_up even with an empty
+    // queue. 0 disables it. unref'd so it never by itself keeps the process
+    // alive; drain() clears it on SIGTERM.
+    if (this.config.bridgeProbeIntervalMs > 0) {
+      this.probeTimer = setInterval(() => {
+        void this.probe().catch((err) => this.log({ evt: "bridge_probe_error", error: String(err) }));
+      }, this.config.bridgeProbeIntervalMs);
+      this.probeTimer.unref();
+    }
   }
 
   // SIGTERM drain (spec §5): stop claiming, then actually WAIT for in-flight
@@ -104,6 +125,7 @@ export class Dispatcher {
   async drain(graceMs = 25_000): Promise<void> {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
+    if (this.probeTimer) clearInterval(this.probeTimer);
     const pending = Promise.allSettled([...this.inFlight]);
     await Promise.race([pending, new Promise((r) => setTimeout(r, graceMs))]);
   }
@@ -122,6 +144,11 @@ export class Dispatcher {
   tick(): void {
     try {
       if (this.stopping) return;
+      // A connection probe is in flight (probe() set this synchronously before
+      // its first await): don't claim, or a real dispatch and the probe would
+      // race the shared bridge gauge. The probe window is short and only opens
+      // when the queue was idle, so this delays no active work.
+      if (this.probing) return;
       if (this.now() < this.bridgeBackoffUntil) return;
       while (this.inFlight.size < this.config.dispatchConcurrency) {
         const job = this.queue.claimNext();
@@ -186,10 +213,8 @@ export class Dispatcher {
       } else {
         // Connection-level failure: the bridge is down. Nothing is failed
         // because of bridge downtime (spec §5) — revert the claim, back off.
-        this.bridgeFailures++;
-        const backoffMs = Math.min(2_000 * 2 ** Math.min(this.bridgeFailures, 6), 120_000);
-        this.bridgeBackoffUntil = this.now() + backoffMs;
-        this.metrics.bridgeUp.set(0);
+        // markBridgeDown() owns the counter/backoff/gauge, shared with probe().
+        const backoffMs = this.markBridgeDown();
         this.queue.requeueBridgeDown(job.id, this.bridgeBackoffUntil);
         // The revert is a real state transition — it must appear in the
         // transitions counter (or queued→running double-counts during
@@ -201,8 +226,7 @@ export class Dispatcher {
       return;
     }
 
-    this.bridgeFailures = 0;
-    this.metrics.bridgeUp.set(1);
+    this.markBridgeUp();
 
     if (!res.ok) {
       this.failAttempt(job, started, { code: "executor_http_error", message: `webhook returned ${res.status}`, retryable: true });
@@ -281,6 +305,76 @@ export class Dispatcher {
 
     this.queue.succeed(job.id, resultJson, report.spent_usd ?? null, JSON.stringify(manifest));
     this.logTransition(job, "succeeded", this.now() - started);
+  }
+
+  // Idle-blindness probe (spec §9). jobs_bridge_up is otherwise written ONLY
+  // by a real dispatch, so a bridge that dies — or recovers — while the queue
+  // is idle stays invisible until the next job flows (and if queued jobs were
+  // canceled during an outage, the gauge could otherwise sit at 0 after the
+  // bridge came back). This refreshes the gauge on a timer using the SAME
+  // accounting a real dispatch uses (markBridgeUp/markBridgeDown), so the two
+  // paths can never leave the gauge and the backoff inconsistent.
+  //
+  // Connection-level ONLY: it GETs N8N_BASE_URL itself — never a
+  // /webhook/<task_type> path — so it can never trigger an executor workflow
+  // (which would run real work and spend budget). ANY HTTP response, 404
+  // included, proves the connection succeeded ⇒ bridge up; only a network
+  // error or timeout is bridge down. That is exactly the gauge's contract:
+  // "1 if the n8n webhook is reachable at the connection level".
+  async probe(): Promise<void> {
+    // Yield to real work and to the backoff. A real dispatch is the stronger
+    // signal (it exercises the actual webhook), so never probe while one is in
+    // flight; the `probing` flag then stops tick() from starting one mid-probe.
+    // While backing off we already know the state and are waiting it out (the
+    // same guard tick uses) — which also means the probe fires right as the
+    // window expires and re-checks a possibly-recovered bridge.
+    if (this.stopping || this.probing) return;
+    if (this.inFlight.size > 0) return;
+    if (this.now() < this.bridgeBackoffUntil) return;
+    this.probing = true;
+    try {
+      try {
+        // Body discarded; only "did the connection come up" matters.
+        await this.fetchImpl(this.config.n8nBaseUrl, {
+          method: "GET",
+          signal: AbortSignal.timeout(BRIDGE_PROBE_TIMEOUT_MS),
+        });
+      } catch (err) {
+        // Unlike dispatch, a probe TIMEOUT is "down", not "executor slow":
+        // there is no workflow to be slow — a live n8n answers its base URL
+        // immediately, so any throw (refused, reset, or timed out) is down.
+        // Re-check shutdown so a late result can't mutate the gauge post-drain;
+        // no real dispatch can have run (the probing guard blocked tick).
+        if (this.stopping) return;
+        const backoffMs = this.markBridgeDown();
+        this.log({ evt: "bridge_probe_down", backoff_ms: backoffMs, error: String(err) });
+        return;
+      }
+      if (this.stopping) return;
+      const recovered = !this.bridgeUp;
+      this.markBridgeUp();
+      if (recovered) this.log({ evt: "bridge_probe_up" });
+    } finally {
+      this.probing = false;
+    }
+  }
+
+  // Bridge accounting, shared by real dispatch and the idle probe so the gauge
+  // and the backoff can never drift between the two paths.
+  private markBridgeUp(): void {
+    this.bridgeFailures = 0;
+    this.metrics.bridgeUp.set(1);
+  }
+
+  // Count a connection-level failure and arm the same exponential backoff
+  // (cap 2 min) dispatch has always used; returns the window for the caller
+  // to log. Sets bridgeBackoffUntil BEFORE returning so callers can read it.
+  private markBridgeDown(): number {
+    this.bridgeFailures++;
+    const backoffMs = Math.min(2_000 * 2 ** Math.min(this.bridgeFailures, 6), 120_000);
+    this.bridgeBackoffUntil = this.now() + backoffMs;
+    this.metrics.bridgeUp.set(0);
+    return backoffMs;
   }
 
   private failAttempt(job: JobRow, started: number, error: { code: string; message: string; retryable: boolean }): void {
