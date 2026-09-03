@@ -7,8 +7,7 @@ review artifact linked from STATUS). Operator sign-offs, recorded where they
 bind as **[SIGN-OFF n]**: (1) pinned pod fetch — approved; (2) caller-token
 JSON map — delegated to engineering, map chosen ("get it right to start" —
 avoids the breaking scalar→map secret reshape later); (3) homelab-notes
-operator-only, NanoClaw gets a curated corpus later — approved; (4) first
-working CI job rides slice 1, broken kubeval workflow deleted — approved.
+operator-only, NanoClaw gets a curated corpus later — approved; (4) first working CI job rides slice 1, broken kubeval workflow deleted — approved; (5) nightly freshness = a direct Schedule → `reingest` with the reingest-bot token n8n already holds, the queue-shaped scheduler parked until jobs-mcp per-caller tokens — approved 2026-09-02 (as-built note below).
 
 **As-built deltas (slice 2, 2026-09-02):** the Deployment adds a
 `startupProbe` (2 min) because the boot re-chunk (§5) runs before the
@@ -18,6 +17,17 @@ series, 48h), because `knowledge_index_age_seconds` only exists after a
 corpus's first clean sweep and `KnowledgeIndexStale` is therefore blind to
 a never-built corpus; the pod runs with no projected SA token, a read-only
 root filesystem, and all capabilities dropped (first internet-fetching pod).
+**Slice 3 as-built (2026-09-02):** the `knowledge-reingest` task type and its
+n8n executor ship as specified (§6) and are the path for manual/ad-hoc runs;
+the NIGHTLY schedule, however, runs as a direct `reingest` call from an n8n
+Schedule trigger with the reingest-bot token n8n already holds
+(`n8n/knowledge-reingest-direct.json`) — **[SIGN-OFF 5]** operator decision:
+riding the jobs envelope nightly would put jobs-mcp's single v1 bearer into
+the n8n env (the whole jobs surface to every workflow author there). The
+queue-shaped scheduler is exported (`knowledge-reingest-nightly.json`),
+imported inactive, and becomes the nightly path once jobs-mcp has
+per-caller tokens (its NanoClaw retrofit) with a caller allowed only
+`enqueue knowledge-reingest`.
 
 **README paragraph (repo convention):** `knowledge-mcp` is the retrieval MCP
 service of the personal cloud. It answers `search` and `fetch` over registered
@@ -306,7 +316,7 @@ which is exactly the staleness alert's signal. Scheduled by a
 executor's *only* action is calling `reingest` with the scoped
 `n8n-reingest` token. The executor fetches nothing, parses nothing, holds no
 content; n8n compromise's knowledge blast radius is "can re-index the public
-repo" — nil. Nightly schedule + manual enqueue after doc-heavy merges.
+repo" — nil. Nightly schedule + manual enqueue after doc-heavy merges. **[SIGN-OFF 5, as-built]:** the nightly run is a direct `reingest` schedule with the reingest-bot token (as-built note at the top); the task type serves manual enqueues until jobs-mcp per-caller tokens exist.
 Registry entry + workflow export ship in one PR (n8n/ convention).
 
 **Budget discipline pre-gateway:** v1 spends $0 **by construction** — no

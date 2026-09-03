@@ -43,7 +43,7 @@ JOBS_WEBHOOK_SECRET=<from terraform.tfvars jobs_mcp_webhook_secret>
 ALERTS_WEBHOOK_SECRET=<from terraform.tfvars alerts_webhook_secret>
 ALERTS_TELEGRAM_CHAT_ID=<numeric chat id of the operator's Telegram — never in git>
 KNOWLEDGE_REINGEST_TOKEN=<from terraform.tfvars knowledge_mcp_n8n_reingest_token>
-# JOBS_MCP_BEARER_TOKEN=<only if the knowledge-reingest-nightly trigger is armed — docs/runbooks/knowledge-mcp.md>
+# JOBS_MCP_BEARER_TOKEN=<ONLY the future per-caller n8n-nightly token, never the v1 operator bearer; set when the queue-shaped nightly is re-armed — docs/runbooks/knowledge-mcp.md>
 ```
 
 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is deliberate (it matches the n8n

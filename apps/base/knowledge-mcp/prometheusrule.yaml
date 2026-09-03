@@ -72,9 +72,9 @@ spec:
             description: >-
               The corpus is registered (knowledge_docs exists) but no clean
               sweep has ever recorded index_as_of. Run the first reingest
-              (docs/runbooks/knowledge-mcp.md "First run"), or — once the
-              nightly knowledge-reingest job exists — check its executor
-              token and job status.
+              (docs/runbooks/knowledge-mcp.md "First run"); if the nightly
+              schedule should have done it, read the n8n execution
+              knowledge-reingest-direct — its error names the cause.
         - alert: KnowledgeIndexStale
           expr: knowledge_index_age_seconds{namespace="knowledge-mcp"} > 172800
           for: 15m
@@ -84,10 +84,11 @@ spec:
             summary: "a knowledge corpus has not completed a clean reingest in 2 days"
             description: >-
               index_as_of advances ONLY on a clean sweep (spec §6), so this
-              means the nightly knowledge-reingest job has been failing or
-              not running for two days: per-doc fetch errors
+              means the nightly reingest (n8n knowledge-reingest-direct) has
+              been failing or not running for two days: per-doc fetch errors
               (knowledge_ingest_errors_total by code), GitHub unreachable
-              from the pod, jobs-mcp/n8n not dispatching it, or the executor
-              token rotated without the n8n env following. Search keeps
+              from the pod, the workflow inactive or n8n down at the tick,
+              or the reingest token rotated without the n8n env following.
+              Search keeps
               serving the last good index. Checklist:
               docs/runbooks/knowledge-mcp.md "Reingest failing".
