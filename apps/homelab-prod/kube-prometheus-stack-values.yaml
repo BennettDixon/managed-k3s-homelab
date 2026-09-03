@@ -16,6 +16,38 @@ spec:
       # bump could silently change routing/inhibition semantics.
       version: 88.6.2
   values:
+    # Storage lives in this PROD patch, not the shared base: `local-path` is
+    # THIS cluster's default class, and apps/development consumes the same
+    # base. A storageClassName that does not exist on a cluster leaves the
+    # claim Pending, the StatefulSet short of ready replicas, and the `apps`
+    # Kustomization (wait: true) stalled — the alerts-review lesson.
+    prometheus:
+      prometheusSpec:
+        # Was chart-default: no storageSpec at all, i.e. an emptyDir on the
+        # node filesystem. Every pod recreation discarded the whole TSDB, and
+        # nothing capped its growth on a node that is ~73% full.
+        #
+        # This is NOT new disk usage: emptyDir already lived on that same
+        # filesystem. It converts anonymous, uncapped, disposable node-disk
+        # into a named claim that survives a restart and has a hard ceiling.
+        retention: 10d
+        # retentionSize is the REAL cap, not the claim: local-path is a
+        # hostPath provisioner and does not enforce the requested size (the
+        # jobs-mcp 1Gi claim is unenforced the same way, STATUS 2026-09-01).
+        # Prometheus applies it to persisted blocks only — the WAL and
+        # head are extra — so it sits well under the claim. Blocks measured
+        # 3.19 GiB at 10d on 2026-09-03, so 8GiB is roughly 2.5x headroom
+        # while capping worst-case growth at a quarter of the node's free
+        # space rather than all of it.
+        retentionSize: 8GiB
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: local-path
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 10Gi
     alertmanager:
       alertmanagerSpec:
         # Mounts the ExternalSecret-synced Secret at
@@ -23,6 +55,20 @@ spec:
         # auth value never appears in these values (repo is public).
         secrets:
           - alerts-webhook-secret
+        # Also chart-default emptyDir until now. Small but not disposable:
+        # this is where silences and the notification log live, so a pod
+        # recreation un-silences everything an operator had silenced and
+        # can re-notify for alerts already sent. 1Gi is far more than the
+        # KiB these actually occupy; the floor is the smallest claim worth
+        # naming.
+        storage:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: local-path
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 1Gi
       # Helm merge semantics: the receivers and route.routes LISTS replace the
       # chart defaults wholesale (so the default Watchdog null-route is
       # re-declared here); `route` itself merges per-key, and every default
