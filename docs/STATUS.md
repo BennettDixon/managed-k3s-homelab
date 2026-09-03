@@ -35,6 +35,15 @@ _Last updated: 2026-09-02_
   (`enqueue → running → succeeded`, attempts:1, through the ACL-gated
   egress). Spec `docs/specs/jobs-mcp.md`; runbook
   `docs/runbooks/jobs-mcp.md`; source `services/jobs-mcp/`.
+- **knowledge-mcp — LIVE (2026-09-02):** the retrieval MCP service on k3s at
+  `http://knowledge-mcp/mcp` (caller-token JSON map, tailnet-only).
+  SQLite+FTS5 index on PVC — a cache rebuilt from GitHub by `reingest`;
+  corpus #1 `homelab-notes` (docs/ + proxmox/). Freshness rides jobs-mcp's
+  `knowledge-reingest` task (n8n executor with the scoped `n8n-reingest`
+  token); the nightly trigger is imported but INACTIVE pending the
+  operator's credential decision. Spec `docs/specs/knowledge-mcp.md`;
+  runbook `docs/runbooks/knowledge-mcp.md`; source
+  `services/knowledge-mcp/`; manifests `apps/base/knowledge-mcp/`.
 - **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS),
   `edgepve` (edge — host tailscale is its management path; see
   `proxmox/edgepve.md`).
@@ -258,8 +267,12 @@ and the one remaining gate step are the operator's:
   temporary copy against a local instance: authorized → completion report;
   forged / out-of-scope / malformed → fail closed) + nightly trigger
   (imported INACTIVE). `KNOWLEDGE_REINGEST_TOKEN` is live in the n8n env.
-  End-to-end proof (enqueue → reingest → index_as_of advances) follows the
-  two merges. Review: 2 agents (executor contract; security/identity), 11 findings, all taken — the dispatcher timeout was shorter than the executor's (orphaned executions on a slow night), error messages now carry what jobs-mcp actually preserves, jobs-mcp gained its first CI workflow with a deployed-registry guard (spec §4's CI-checkable invariant).
+  **MERGED 2026-09-02 and PROVEN end to end:** jobs-mcp hash-rolled on the
+  registry change and came up listing both task types; `enqueue → running
+  → succeeded` (attempts:1, spent 0) with `result.source_ref` =
+  `main@78c1fa1`; knowledge-mcp `index_as_of.commit` advanced to the same
+  sha (3 docs re-indexed, 8 unchanged, 96 chunks); the n8n execution
+  succeeded. Review: 2 agents (executor contract; security/identity), 11 findings, all taken — the dispatcher timeout was shorter than the executor's (orphaned executions on a slow night), error messages now carry what jobs-mcp actually preserves, jobs-mcp gained its first CI workflow with a deployed-registry guard (spec §4's CI-checkable invariant).
 - **Operator decision parked in the runbook:** arming the nightly trigger
   puts the jobs-mcp bearer into the n8n env (second holder of the operator
   credential). Alternative: an in-cluster CronJob via ExternalSecret.
@@ -268,19 +281,24 @@ and the one remaining gate step are the operator's:
 
 ## Next session starts with
 
-- **knowledge-mcp slice 2 — MERGED + LIVE 2026-09-02** (#9): first run
-  complete per the runbook (pod Ready, first reingest, search, metrics).
-  Register the operator token on the workbench (`mini/mcp-config.md`).
-- **knowledge-mcp slice 3 — PR #11** (re-targeted to main after #10
-  merged into the slice-2 branch):
-  `knowledge-reingest` task_type + executor (imported on n8n, ACTIVE,
-  proven against a local instance) + nightly trigger (imported INACTIVE —
-  the jobs-bearer-in-n8n decision is the operator's, runbook "Scheduled
-  freshness"). End-to-end proof after both merges: enqueue → reingest →
-  index_as_of advances.
-- Still open from build order item 1: storage classes + site labels; the
-  two spun-off chips (external-secrets IAM under terraform; jobs-mcp
-  bridge-gauge idle-blindness probe).
+- **knowledge-mcp v1 is LIVE end to end** (#9 + #11, 2026-09-02): serving at
+  `http://knowledge-mcp/mcp`, registered on the workbench, scheduled
+  freshness proven through jobs-mcp, and the nightly direct schedule
+  (`knowledge-reingest-direct`, decision above) armed on n8n. Operator
+  decision still open: keep or strike the fourth alert
+  (`KnowledgeIndexNeverBuilt`). Per-caller jobs-mcp tokens (the NanoClaw
+  retrofit) are what re-arm the queue-shaped nightly.
+- **Next build-order item: the model gateway spec** (item 4). Language is
+  an explicit sign-off question (Python vs TS-for-parity, two-toolchain cost
+  stated); lanes: subscription via headless Claude on workers, metered API
+  fallback; per-project ledger; request logging. Design-first with the
+  panel + critics treatment jobs-mcp and knowledge-mcp got.
+- **Awaiting the operator's pick** (one sharp question, not a guess): the
+  two parked chips (external-secrets IAM identity under terraform;
+  jobs-mcp bridge-gauge idle-blindness probe) or build-order item 1
+  (storage classes + site labels).
+- Housekeeping from the pulse check: Harbor admin password drift, node
+  disk headroom; still parked: the dead-man's snitch on the Watchdog alert.
 
 ## Decisions log
 
@@ -308,13 +326,14 @@ and the one remaining gate step are the operator's:
 - 2026-09-02: homelab-notes stays operator-only permanently; NanoClaw will
   be served a deliberately curated corpus (e.g. homelab-faq) instead of the
   working notes (conversational-exfiltration fence).
-- 2026-09-02: the nightly `knowledge-reingest` trigger is imported but stays
-  INACTIVE until the operator decides where the scheduler's credential
-  lives — the jobs-mcp bearer in the n8n env (whole v1 tool surface to every
-  workflow author), a direct `reingest` schedule with the reingest-bot token
-  n8n already holds (zero new secrets, loses the job row — spec §6
-  deviation), or per-caller jobs-mcp tokens later. Reingest is manual until
-  then; `KnowledgeIndexStale` keeps that honest.
+- 2026-09-02: nightly knowledge freshness runs as a DIRECT `reingest`
+  schedule (n8n Schedule trigger → knowledge-mcp, with the scoped
+  reingest-bot token n8n already holds) — zero new secrets, no job row;
+  spec §6 deviation by sign-off (SIGN-OFF 5). The queue-shaped scheduler
+  stays exported and INACTIVE until jobs-mcp has per-caller tokens, when a
+  caller allowed only `enqueue knowledge-reingest` takes over. The v1 jobs
+  bearer never enters the n8n env: it would hand every workflow author the
+  whole jobs-mcp surface.
 - 2026-09-02: shared-base HelmRelease values that are prod-only (receiver
   config, secret mounts) live as apps/homelab-prod PATCHES, not in the base
   — apps/development consumes the same bases (learned from the alerts
