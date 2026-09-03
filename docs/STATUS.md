@@ -284,10 +284,10 @@ and the one remaining gate step are the operator's:
 - **knowledge-mcp v1 is LIVE end to end** (#9 + #11, 2026-09-02): serving at
   `http://knowledge-mcp/mcp`, registered on the workbench, scheduled
   freshness proven through jobs-mcp, and the nightly direct schedule
-  (`knowledge-reingest-direct`, decision above) armed on n8n. Operator
-  decision still open: keep or strike the fourth alert
-  (`KnowledgeIndexNeverBuilt`). Per-caller jobs-mcp tokens (the NanoClaw
-  retrofit) are what re-arm the queue-shaped nightly.
+  (`knowledge-reingest-direct`, decision above) armed on n8n. The fourth
+  alert (`KnowledgeIndexNeverBuilt`) stays (operator, 2026-09-03).
+  Per-caller jobs-mcp tokens (the NanoClaw retrofit) are what re-arm the
+  queue-shaped nightly.
 - **Next build-order item: the model gateway spec** (item 4). Language is
   an explicit sign-off question (Python vs TS-for-parity, two-toolchain cost
   stated); lanes: subscription via headless Claude on workers, metered API
@@ -326,6 +326,10 @@ and the one remaining gate step are the operator's:
 - 2026-09-02: homelab-notes stays operator-only permanently; NanoClaw will
   be served a deliberately curated corpus (e.g. homelab-faq) instead of the
   working notes (conversational-exfiltration fence).
+- 2026-09-03: `KnowledgeIndexNeverBuilt` (the fourth knowledge-mcp rule,
+  review-added beyond spec §9's three) is kept: the stale-index alert has
+  no series to fire on for a corpus that was never built, and 48 h matches
+  the nightly cadence so a PVC rebuild never pages.
 - 2026-09-02: nightly knowledge freshness runs as a DIRECT `reingest`
   schedule (n8n Schedule trigger → knowledge-mcp, with the scoped
   reingest-bot token n8n already holds) — zero new secrets, no job row;
