@@ -53,7 +53,7 @@ queries:
     expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
   - q: "make tailscale start automatically when the NAS boots"
     expect: ["homelab-notes:proxmox/nas-vm.md"]
-  - q: "what still works when the parents house loses internet"
+  - q: "what still works when a site loses internet"
     expect: ["homelab-notes:docs/specs/jobs-mcp.md"]
   # Promoted 2026-09-02: both were expect_miss paraphrases until the
   # knowledge-mcp spec joined the corpus and shifted BM25 statistics — the
