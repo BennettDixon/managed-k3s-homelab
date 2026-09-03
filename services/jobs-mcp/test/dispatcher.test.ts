@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { testDb, testRegistry, testConfig, validEnvelope, ManualClock, makeQueue } from "./helpers.js";
 import { validateEnvelope } from "../src/envelope.js";
@@ -268,5 +268,155 @@ describe("dispatcher / n8n bridge (spec §5–§7)", () => {
     await d.dispatch(queue.claimNext()!);
     expect(queue.get(id)!.state).toBe("failed");
     expect(JSON.parse(queue.get(id)!.error!).code).toBe("task_type_removed");
+  });
+});
+
+describe("dispatcher / idle bridge probe (spec §9)", () => {
+  it("a thrown connection error marks the bridge down", async () => {
+    const d = makeDispatcher(
+      fakeFetch(() => {
+        throw new TypeError("fetch failed: ECONNREFUSED");
+      }),
+    );
+    expect(d.bridgeUp).toBe(true); // starts up
+    await d.probe();
+    expect(d.bridgeUp).toBe(false);
+  });
+
+  it("marks up on ANY response (404 included), via GET to the base URL — never a webhook path", async () => {
+    let throwIt = true;
+    const seen: { url: string; method?: string }[] = [];
+    const d = makeDispatcher(
+      fakeFetch((url, init) => {
+        seen.push({ url, method: init.method });
+        if (throwIt) throw new TypeError("fetch failed: ECONNREFUSED");
+        return new Response("not found", { status: 404 });
+      }),
+    );
+    await d.probe(); // connection error → down
+    expect(d.bridgeUp).toBe(false);
+    throwIt = false;
+    clock.advance(200_000); // clear the backoff the down-probe armed (cap 120s)
+    await d.probe(); // a 404 still proves the connection came up ⇒ up
+    expect(d.bridgeUp).toBe(true);
+    expect(seen.length).toBe(2);
+    for (const c of seen) {
+      expect(c.method).toBe("GET");
+      expect(c.url).toBe(config.n8nBaseUrl);
+      expect(c.url).not.toContain("/webhook"); // MUST NOT be able to fire a workflow
+    }
+  });
+
+  it("honors bridgeBackoffUntil and reuses the backoff a real dispatch armed", async () => {
+    let calls = 0;
+    const d = makeDispatcher(
+      fakeFetch(() => {
+        calls++;
+        throw new TypeError("fetch failed: ECONNREFUSED");
+      }),
+    );
+    // Arm the backoff via a real dispatch connection failure.
+    queue.enqueue(env());
+    await d.dispatch(queue.claimNext()!);
+    expect(d.bridgeUp).toBe(false);
+    const afterDispatch = calls; // 1 (the webhook attempt)
+    // Within the backoff window the probe must NOT fetch.
+    await d.probe();
+    expect(calls).toBe(afterDispatch);
+    // Once the window expires the probe checks again (idle recovery detection).
+    clock.advance(200_000);
+    await d.probe();
+    expect(calls).toBe(afterDispatch + 1);
+  });
+
+  it("yields to a tick-driven dispatch already in flight — no gauge clobber", async () => {
+    let release!: (r: Response) => void;
+    const gate = new Promise<Response>((r) => (release = r));
+    let baseProbes = 0;
+    const d = makeDispatcher(
+      fakeFetch((url) => {
+        if (url === config.n8nBaseUrl) {
+          baseProbes++;
+          return new Response("x", { status: 200 });
+        }
+        return gate; // the webhook dispatch hangs, holding a slot in flight
+      }),
+    );
+    queue.enqueue(env());
+    d.tick(); // claims + dispatches → inFlight === 1, awaiting the gate
+    expect(d.inFlightCount).toBe(1);
+    await d.probe(); // must skip: a real dispatch is in flight
+    expect(baseProbes).toBe(0);
+    release(jsonResponse({ ok: true, result: { ok: 1 } }));
+    await d.drain(5_000); // let the dispatch settle
+    expect(d.bridgeUp).toBe(true);
+  });
+
+  it("tick refuses to claim while a probe is in flight (probing guard)", async () => {
+    let release!: (r: Response) => void;
+    const gate = new Promise<Response>((r) => (release = r));
+    let webhookCalls = 0;
+    const d = makeDispatcher(
+      fakeFetch((url) => {
+        if (url === config.n8nBaseUrl) return gate; // probe's connection check hangs
+        webhookCalls++;
+        return jsonResponse({ ok: true, result: {} });
+      }),
+    );
+    const { id } = queue.enqueue(env());
+    const probing = d.probe(); // starts, sets probing=true, awaits the gate
+    d.tick(); // must NOT claim while a probe is in flight
+    expect(webhookCalls).toBe(0);
+    expect(queue.get(id)!.state).toBe("queued");
+    release(new Response("ok", { status: 200 }));
+    await probing;
+    expect(d.bridgeUp).toBe(true);
+  });
+
+  it("BRIDGE_PROBE_INTERVAL_MS=0 disables the probe: start() schedules none", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const cfg = testConfig({ bridgeProbeIntervalMs: 0 });
+      const d = new Dispatcher(queue, registry, cfg, metrics, clock.now, {
+        fetchImpl: fakeFetch(() => {
+          calls++;
+          return jsonResponse({ ok: true });
+        }),
+        log: silent,
+      });
+      d.start();
+      await vi.advanceTimersByTimeAsync(5 * 60_000); // 5 min — many probe intervals
+      await d.drain(0);
+      expect(calls).toBe(0); // no probe fired; empty queue means tick fetches nothing either
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("when enabled and idle, the probe fires on its interval, GETting only the base URL", async () => {
+    vi.useFakeTimers();
+    try {
+      const seen: { url: string; method?: string }[] = [];
+      const cfg = testConfig({ bridgeProbeIntervalMs: 60_000 });
+      const d = new Dispatcher(queue, registry, cfg, metrics, clock.now, {
+        fetchImpl: fakeFetch((url, init) => {
+          seen.push({ url, method: init.method });
+          return new Response("ok", { status: 200 });
+        }),
+        log: silent,
+      });
+      d.start();
+      await vi.advanceTimersByTimeAsync(60_000); // one probe interval
+      await d.drain(0);
+      expect(seen.length).toBeGreaterThanOrEqual(1);
+      for (const c of seen) {
+        expect(c.method).toBe("GET");
+        expect(c.url).toBe(cfg.n8nBaseUrl);
+        expect(c.url).not.toContain("/webhook");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

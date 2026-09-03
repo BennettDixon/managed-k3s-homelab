@@ -31,6 +31,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     n8nBaseUrl: "http://n8n.test:5678",
     n8nApiKey: null,
     dispatchConcurrency: 2,
+    bridgeProbeIntervalMs: 60_000,
     maxBudgetCapUsd: 25,
     nasHost: "truenas-bulk-52tb",
     nasArtifactsBase: "/mnt/BulkPoolZ2/artifacts",

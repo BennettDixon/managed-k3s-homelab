@@ -7,6 +7,7 @@ export interface Config {
   n8nBaseUrl: string;
   n8nApiKey: string | null;
   dispatchConcurrency: number;
+  bridgeProbeIntervalMs: number;
   maxBudgetCapUsd: number;
   nasHost: string;
   nasArtifactsBase: string;
@@ -54,6 +55,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     n8nBaseUrl: (env.N8N_BASE_URL ?? "http://n8n:5678").replace(/\/+$/, ""),
     n8nApiKey: env.N8N_API_KEY ?? null,
     dispatchConcurrency: intEnv(env, "DISPATCH_CONCURRENCY", 2, 1, 16),
+    // Idle-blindness probe cadence (spec §9): jobs_bridge_up is otherwise only
+    // written by a real dispatch, so a bridge dying/recovering on an idle queue
+    // goes unseen. 0 disables the probe; default 60s; cap 1h.
+    bridgeProbeIntervalMs: intEnv(env, "BRIDGE_PROBE_INTERVAL_MS", 60_000, 0, 3_600_000),
     maxBudgetCapUsd: numEnv(env, "MAX_BUDGET_CAP_USD", 25, 0.01, 10_000),
     nasHost: env.NAS_HOST ?? "truenas-bulk-52tb",
     nasArtifactsBase: env.NAS_ARTIFACTS_BASE ?? "/mnt/BulkPoolZ2/artifacts",

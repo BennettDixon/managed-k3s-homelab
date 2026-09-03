@@ -39,15 +39,19 @@ spec:
           annotations:
             summary: "jobs-mcp dispatch attempts to the n8n bridge are failing"
             description: >-
-              Dispatch attempts have failed at the connection level for 10
-              minutes. Dispatch is frozen with backoff; enqueue still works
-              and nothing is failed by bridge downtime (spec §5). Checklist:
-              docs/runbooks/jobs-mcp.md "Bridge down". Caveats (gauge is
-              event-driven, written only by dispatch attempts): an idle queue
-              means a dead bridge goes UNDETECTED until work arrives; and if
-              queued jobs are canceled during an outage the gauge can stay 0
-              after the bridge recovers, until the next successful dispatch
-              clears it.
+              Connection-level attempts to the n8n bridge have failed for 10
+              minutes. Dispatch is frozen with backoff; enqueue still works and
+              nothing is failed by bridge downtime (spec §5). Checklist:
+              docs/runbooks/jobs-mcp.md "Bridge down". The gauge is refreshed
+              even on an idle queue by the periodic connection-level probe
+              (spec §9, BRIDGE_PROBE_INTERVAL_MS, default 60s), so a bridge that
+              dies or recovers while idle is detected within roughly one probe
+              interval plus the current backoff window — not only when the next
+              job flows. With the probe disabled (interval 0) the old
+              event-driven caveats return: on an idle queue a dead bridge stays
+              UNDETECTED until work arrives, and if queued jobs were canceled
+              during an outage the gauge can stay 0 after the bridge recovers,
+              until the next successful dispatch clears it.
         - alert: JobsQueueStalled
           expr: jobs_queue_oldest_age_seconds{namespace="jobs-mcp"} > 1800
           for: 10m

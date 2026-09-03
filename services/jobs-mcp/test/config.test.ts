@@ -9,6 +9,15 @@ describe("config validation (env coercion must fail loudly)", () => {
     expect(c.dispatchConcurrency).toBe(2);
     expect(c.maxBudgetCapUsd).toBe(25);
     expect(c.port).toBe(8080);
+    expect(c.bridgeProbeIntervalMs).toBe(60_000);
+  });
+
+  it("BRIDGE_PROBE_INTERVAL_MS parses, accepts 0 (disable), and rejects junk", () => {
+    expect(loadConfig({ ...baseEnv, BRIDGE_PROBE_INTERVAL_MS: "0" }).bridgeProbeIntervalMs).toBe(0);
+    expect(loadConfig({ ...baseEnv, BRIDGE_PROBE_INTERVAL_MS: "30000" }).bridgeProbeIntervalMs).toBe(30_000);
+    expect(() => loadConfig({ ...baseEnv, BRIDGE_PROBE_INTERVAL_MS: "" })).toThrowError(/BRIDGE_PROBE_INTERVAL_MS/);
+    expect(() => loadConfig({ ...baseEnv, BRIDGE_PROBE_INTERVAL_MS: "soon" })).toThrowError(/BRIDGE_PROBE_INTERVAL_MS/);
+    expect(() => loadConfig({ ...baseEnv, BRIDGE_PROBE_INTERVAL_MS: "-1" })).toThrowError(/BRIDGE_PROBE_INTERVAL_MS/);
   });
 
   it("empty numeric env vars throw instead of coercing to 0", () => {
