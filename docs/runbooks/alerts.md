@@ -101,6 +101,57 @@ Rotate `alerts_webhook_secret` in tfvars → targeted apply → update
 ExternalSecret refresh (≤1h, or annotate to force) → Alertmanager pod picks
 up the mounted file on its own (credentials_file is read per-request).
 
+## Monitoring state storage (added 2026-09-03)
+
+Prometheus and Alertmanager ran on the chart-default `emptyDir` until now: on
+the node filesystem, so every pod recreation discarded the TSDB, every silence
+and the notification log — and nothing capped TSDB growth on a node already
+~73% full. Both now take `local-path` claims, declared in the PROD values
+patch only (`apps/homelab-prod/kube-prometheus-stack-values.yaml`); the shared
+base stays clean because `apps/development` consumes it and a class that does
+not exist there would leave the claim Pending and stall `apps` (wait: true).
+
+This adds no disk usage — `emptyDir` was already on that filesystem. It makes
+the usage named, restart-surviving and bounded.
+
+**The cap that actually binds is `retentionSize: 8GiB`, not the 10Gi claim.**
+local-path is a hostPath provisioner and does not enforce a requested size
+(same as the unenforced jobs-mcp 1Gi claim). `retentionSize` governs persisted
+blocks only — WAL and head are on top — which is why it sits well under the
+claim. Blocks measured 3.19 GiB at 10d retention on 2026-09-03.
+
+**One-time cost when this merges.** `volumeClaimTemplates` are immutable, so
+prometheus-operator deletes and recreates each StatefulSet to apply the new
+storage. Expect on the first reconcile:
+
+- Prometheus starts with an empty TSDB — the current 10 days of history is
+  gone. Dashboards look blank until data accumulates. Alert rules are
+  unaffected (they live in PrometheusRules), but any rule with a long `for:`
+  window needs that window to elapse again before it can fire.
+- Alertmanager loses active silences and its notification log, so anything
+  silenced must be re-silenced and already-sent alerts may notify once more.
+  Check for live silences BEFORE merging; there were none on 2026-09-03.
+
+**Decided (operator, 2026-09-03):** the existing history is dropped, not
+snapshotted or exported first. Nothing in it is load-bearing yet — no ledger
+reads it, no SLO baseline depends on it — and a TSDB snapshot would need a
+hand-restore into the new claim for no consumer.
+
+Verify after merge:
+
+```bash
+kubectl -n kube-prometheus-stack get pvc          # both claims Bound
+kubectl -n kube-prometheus-stack get pods         # both StatefulSet pods Ready
+# retention cap took effect (expect 8GiB / 8589934592):
+kubectl -n kube-prometheus-stack get prometheus -o jsonpath='{.items[0].spec.retentionSize}{"\n"}'
+# then re-run the end-to-end synthetic alert above — the receiver path is
+# unchanged by this, but it is the cheapest proof the recreate went clean.
+```
+
+Rollback is removing the two blocks: the operator recreates the StatefulSets
+on `emptyDir` again and the claims are left behind for manual cleanup
+(deleting a PVC is destructive — an explicit operator task, never folded in).
+
 ## Named seams (not built)
 
 - **Dead-man's snitch:** Alertmanager, Prometheus, and n8n all share
