@@ -132,7 +132,7 @@ storage. Expect on the first reconcile:
   silenced must be re-silenced and already-sent alerts may notify once more.
   Check for live silences BEFORE merging; there were none on 2026-09-03.
 
-**Decided (operator, 2026-09-03):** the existing history is dropped, not
+**Decided (operator, 2026-09-05):** the existing history is dropped, not
 snapshotted or exported first. Nothing in it is load-bearing yet — no ledger
 reads it, no SLO baseline depends on it — and a TSDB snapshot would need a
 hand-restore into the new claim for no consumer.
