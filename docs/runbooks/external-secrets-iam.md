@@ -7,6 +7,12 @@ ClusterSecretStore it feeds: `infrastructure/configs/secret-stores.yaml`
 (unchanged by this work — the Secret NAME stays `aws-creds`; only its two key
 VALUES change, and only at cutover).
 
+**Status: cut over 2026-09-09.** Targeted apply 4 add / 0 change / 0 destroy;
+`aws-creds` swapped; all 13 ExternalSecrets re-synced on the new key inside the
+verification window. Remaining: step 5 — deactivate the legacy key after a
+cool-down, then delete it, detach `SecretsManagerReadWrite`, delete the console
+user and the local backup.
+
 ## What ESO uses today, and the problem
 
 ESO authenticates to AWS Secrets Manager with a **static IAM user access key**

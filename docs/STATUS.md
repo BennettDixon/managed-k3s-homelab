@@ -3,13 +3,18 @@
 Rolling status of the personal-cloud buildout. Updated at the end of every working
 session. Tailnet MagicDNS names only — no LAN IPs or site details in this file.
 
-_Last updated: 2026-09-02_
+_Last updated: 2026-09-09_
 
 ## Standing infrastructure
 
 - **k3s cluster** — single node (`k3s`), managed by Flux from `main` of this repo.
   Running: harbor (private registry, homelab root CA via cert-manager), jupyterhub,
   kube-prometheus-stack, personal-site, tailscale-operator (kubectl over tailnet).
+  Prometheus and Alertmanager keep state on `local-path` claims since
+  2026-09-05 (10 Gi with `retentionSize` 8 GiB; 1 Gi) — `docs/runbooks/alerts.md`.
+  External-secrets authenticates as the terraform-managed, read-only
+  `k3s-external-secrets-reader` since 2026-09-09
+  (`docs/runbooks/external-secrets-iam.md`).
 - **Tailnet** is the only network; nothing is publicly exposed except the
   Lightsail proxy path for the personal site.
 - **Gateways:** compute site HA pair `tailscale-gw` + `tailscale-gw2` (server
@@ -33,15 +38,18 @@ _Last updated: 2026-09-02_
   deterministic n8n executors via the operator egress Service, artifacts
   convention on the bulk NAS. First job proven end-to-end
   (`enqueue → running → succeeded`, attempts:1, through the ACL-gated
-  egress). Spec `docs/specs/jobs-mcp.md`; runbook
+  egress). The idle bridge probe (#16) ships as 0.2.0 via PR #19 together
+  with pod hardening parity and a version-bump CI guard (image pushed
+  2026-09-09). Spec `docs/specs/jobs-mcp.md`; runbook
   `docs/runbooks/jobs-mcp.md`; source `services/jobs-mcp/`.
 - **knowledge-mcp — LIVE (2026-09-02):** the retrieval MCP service on k3s at
   `http://knowledge-mcp/mcp` (caller-token JSON map, tailnet-only).
   SQLite+FTS5 index on PVC — a cache rebuilt from GitHub by `reingest`;
-  corpus #1 `homelab-notes` (docs/ + proxmox/). Freshness rides jobs-mcp's
-  `knowledge-reingest` task (n8n executor with the scoped `n8n-reingest`
-  token); the nightly trigger is imported but INACTIVE pending the
-  operator's credential decision. Spec `docs/specs/knowledge-mcp.md`;
+  corpus #1 `homelab-notes` (docs/ + proxmox/). Nightly freshness is the
+  DIRECT `knowledge-reingest-direct` schedule on n8n (SIGN-OFF 5; firing
+  daily at 07:30Z since 2026-09-03 with the index at `main`); the
+  queue-shaped `knowledge-reingest-nightly` stays INACTIVE until jobs-mcp has
+  per-caller tokens. Spec `docs/specs/knowledge-mcp.md`;
   runbook `docs/runbooks/knowledge-mcp.md`; source
   `services/knowledge-mcp/`; manifests `apps/base/knowledge-mcp/`.
 - **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS),
@@ -169,6 +177,64 @@ Findings (none block work; all pre-existing):
   does it cost to run a job") now hits — promote it in
   `services/knowledge-mcp/eval/golden.yaml` (improvement, not failure).
 
+## Pulse check (2026-09-09, session start)
+
+Nothing new on `main` since #18 (2026-09-05); no open PRs. All 8 Flux
+kustomizations Ready at `main`; Prometheus and Alertmanager healthy on their
+claims (TSDB 1.3 GiB against the 8 GiB cap, four days after the recreate);
+the direct nightly reingest fired every morning at 07:30Z with the index at
+`main`; only `Watchdog` and the null-routed phyt-system job firing. Node
+disk 75.8% by node-exporter's avail-based view (23.7 GiB free) — the
+2026-09-05 recreate freed ~3.4 GiB by dropping the ephemeral TSDB copy.
+
+Findings:
+
+- **Two merges from 2026-09-03 were half-landed** (found by the build review
+  below, still true at this pulse): #16's probe merged as code only — the
+  pod and the manifest sat at 0.1.0 because CI never builds images — while
+  its PrometheusRule half DID reconcile, so `JobsBridgeDown`'s text
+  described a probe the running pod did not have; and #15's IAM identity
+  merged as terraform only — the `aws-creds` Secret had not been written
+  since 2025-01-14. Both closed this session (session log below).
+- **Grafana's admin password is the chart default**, behind the LAN
+  traefik ingress with the full Prometheus datasource. Fix: terraform
+  module + SM entry + ESO policy ARN + prod values patch — agent PR now
+  that the scoped ESO policy is the live identity.
+- **Upgrade remediation** is set only on kube-prometheus-stack; a failed
+  chart upgrade on harbor / jupyterhub / tailscale parks `apps` NotReady
+  until a human acts, and cert-manager floats unpinned. Small agent-only PR.
+
+## Session log — build review, then landing the half-landed merges (2026-09-03 → 09-09)
+
+A whole-repo review (eight layer readers against a live read-only pulse,
+four planners from opposed lenses, adversarial verification of the
+load-bearing claims) set the order: close the two half-landed merges and
+refresh this file; open the gateway spec in parallel; three narrow
+hardening changes; then gateway slices. Landed since:
+
+- **PR #17 — golden-eval reword (2026-09-05):** the one query naming a
+  family location (a public-repo hard rule) reworded; recall@5 25/25, MRR
+  0.923 before and after — retrieval-neutral. Forward fix, no history
+  rewrite.
+- **PR #18 — monitoring state on durable, size-capped claims (2026-09-05):**
+  Prometheus 10 Gi with `retentionSize` 8 GiB, Alertmanager 1 Gi, both
+  `local-path`, prod patch only. Not the NAS (Prometheus does not support
+  its TSDB on NFS) and not Harbor (a registry). Adds no disk — emptyDir
+  already lived on the node fs. Operator decision: existing history
+  dropped. Landed and verified on the cluster within a minute of merge.
+- **ESO IAM cutover executed (2026-09-09, operator, per
+  `docs/runbooks/external-secrets-iam.md`):** targeted apply 4 add / 0
+  change / 0 destroy (13 secret ARNs); `aws-creds` swapped; all 13
+  ExternalSecrets re-synced on the new read-only identity. Verified first:
+  `aws-creds` held the legacy user's key and the phyt tenant's store uses a
+  different one. The legacy account-wide key stays ACTIVE until step 5
+  (deactivate → cool-down → delete).
+- **PR #19 — jobs-mcp 0.2.0 (opened 2026-09-09, CI green):** the #16 probe
+  finally ships (image pushed, contents verified), pod hardening parity
+  with knowledge-mcp (no SA token, seccomp, read-only rootfs, no caps,
+  64Mi /tmp), and a PR-only CI guard that fails an image-input change
+  without a version + tag bump — the drift that left #16 undeployed.
+
 ## Parked (deliberate, not forgotten)
 - **~~knowledge-mcp vector store~~ — DECIDED 2026-09-02** (spec
   `docs/specs/knowledge-mcp.md` §1, panel + adversarial critique):
@@ -199,13 +265,24 @@ Findings (none block work; all pre-existing):
   provider-schema drift on its public-ports resource) and tag-tweak one IAM
   user. Harmless today (secret changes go through targeted applies), but the
   proxy needs its own maintenance window: fresh tailscale auth key, brief
-  public-site downtime, then untargeted applies are clean again.
-- **Harbor UI on the tailnet** (2026-09-01): expose the portal via the
-  tailscale operator (same `tailscale.com/expose` pattern as personal-site)
-  so the UI needs no subnet-route/hosts-file setup on clients. Additive and
-  cheap. The registry *hostname* stays `harbor.internal` — renaming it is a
-  real migration (image refs, pull secrets, containerd trust, CA SANs,
-  build scripts) with no current forcing event.
+  public-site downtime, then untargeted applies are clean again. Live read
+  2026-09-03: the public-ports resource has real content drift beyond the
+  schema drift (ports changed outside terraform, one of them documented
+  nowhere), so stage 1 — reconcile the ports resource to reality and ignore
+  the irreproducible `user_data` — comes before any replacement window.
+- **~~Harbor UI on the tailnet~~ — DONE 2026-09-01** (`harbor-ui` Ingress
+  via the tailscale operator). The registry *hostname* stays
+  `harbor.internal` — renaming it is a real migration (image refs, pull
+  secrets, containerd trust, CA SANs, build scripts) with no forcing event.
+- **Build-order item 1 (storage classes + site labels)** — deferred again
+  2026-09-03 with reopen triggers (decisions log): one node, one
+  provisioner, no scheduling effect until a second node exists.
+- **Legacy ESO key deactivation** (operator, runbook step 5): deactivate
+  after a cool-down from the 2026-09-09 cutover, then delete the key, detach
+  `SecretsManagerReadWrite`, delete the console user and the local backup.
+- **Grafana admin credential** onto the secret path (chart default today)
+  and **upgrade remediation** on the three HelmReleases that lack it +
+  cert-manager pin — agent-only PRs queued (pulse 2026-09-09).
 
 ## jobs-mcp v1 shipped (2026-08-31 → 2026-09-01)
 
@@ -284,24 +361,32 @@ and the one remaining gate step are the operator's:
 
 ## Next session starts with
 
-- **knowledge-mcp v1 is LIVE end to end** (#9 + #11, 2026-09-02): serving at
-  `http://knowledge-mcp/mcp`, registered on the workbench, scheduled
-  freshness proven through jobs-mcp, and the nightly direct schedule
-  (`knowledge-reingest-direct`, decision above) armed on n8n. Operator
-  decision still open: keep or strike the fourth alert
-  (`KnowledgeIndexNeverBuilt`). Per-caller jobs-mcp tokens (the NanoClaw
-  retrofit) are what re-arm the queue-shaped nightly.
-- **Next build-order item: the model gateway spec** (item 4). Language is
-  an explicit sign-off question (Python vs TS-for-parity, two-toolchain cost
-  stated); lanes: subscription via headless Claude on workers, metered API
-  fallback; per-project ledger; request logging. Design-first with the
-  panel + critics treatment jobs-mcp and knowledge-mcp got.
-- **Awaiting the operator's pick** (one sharp question, not a guess): the
-  two parked chips (external-secrets IAM identity under terraform;
-  jobs-mcp bridge-gauge idle-blindness probe) or build-order item 1
-  (storage classes + site labels).
-- Housekeeping from the pulse check: node disk headroom; still parked: the
-  dead-man's snitch on the Watchdog alert.
+- **Next build-order item: the model gateway spec** (item 4) — unchanged and
+  now unblocked; no gateway artifact exists anywhere yet. Nine sign-offs go
+  to the operator in one sitting: language (Python vs TS-for-parity,
+  two-toolchain cost stated); placement (k3s pod, the subscription lane
+  later as a worker-side pull agent); lane routing and whether fallback may
+  convert $0 subscription calls into metered spend; ledger store (house
+  SQLite); per-project budget model; OpenAI-compatible surface size; caller
+  auth (the caller-token map — the gateway is its second consumer);
+  request-log content (metadata only); the subscription lane's terms and
+  quota. Design-first with the panel + critics treatment jobs-mcp and
+  knowledge-mcp got.
+- **Merge PR #19** in its own window (it recreates the jobs-mcp pod through
+  the `apps` chain), then verify per its description — never in the same
+  window as another reconciliation-chain change.
+- **Operator step pending:** deactivate the legacy ESO key (runbook step 5)
+  after a cool-down; then delete it and the local `aws-creds` backup.
+- **Agent-only PRs queued:** Grafana admin credential onto the secret path;
+  upgrade remediation on harbor / jupyterhub / tailscale + cert-manager pin;
+  a knowledge-mcp version-bump guard mirroring #19's.
+- **Still parked:** build-order item 1 (reopen triggers in the decisions
+  log), the dead-man's snitch on Watchdog, the Alertmanager NetworkPolicy,
+  Lightsail drift stage 1, node disk headroom. Per-caller jobs-mcp tokens
+  (the NanoClaw retrofit) remain what re-arm the queue-shaped nightly — and
+  the retrofit is larger than spec §2's "small change to the auth check"
+  (no caller column, no ownership on cancel/status, a global UNIQUE on
+  `idempotency_key`); it gets its own short spec when NanoClaw is next.
 
 ## Decisions log
 
@@ -342,3 +427,25 @@ and the one remaining gate step are the operator's:
   — apps/development consumes the same bases (learned from the alerts
   review; the jobs-mcp in-base-secrets precedent only works because that
   base is excluded from dev).
+- 2026-09-03: the fourth knowledge alert `KnowledgeIndexNeverBuilt` is KEPT.
+- 2026-09-03: build-order item 1 (storage classes + site labels) deferred
+  again — one node, one provisioner (`local-path`), no CSI: labels change
+  no scheduling decision and a NAS-backed class means a new driver with no
+  consumer. Reopen when an edgepve k3s agent joins, or a NAS-backed class
+  gets a real consumer.
+- 2026-09-05: Prometheus and Alertmanager state moves to `local-path`
+  claims with `retentionSize` as the real cap (local-path does not enforce
+  claim sizes) — not the NAS (Prometheus does not support its TSDB on NFS)
+  and not Harbor (a registry). The existing history was dropped, not
+  exported (operator).
+- 2026-09-09: external-secrets authenticates as the terraform-managed
+  read-only `k3s-external-secrets-reader` (cutover per runbook, 4 add / 0 /
+  0, all 13 ExternalSecrets re-synced). Every new Secrets Manager entry an
+  ExternalSecret reads must add its module's `.secret_arn` to
+  `terraform/iam-external-secrets.tf` in the same PR, or ESO gets
+  AccessDenied for it. Legacy key deactivation follows a cool-down.
+- 2026-09-09: "merged ≠ landed" — CI never builds images and terraform-only
+  PRs change nothing live, so a merge is verified on the cluster, not on
+  GitHub. A jobs-mcp PR that changes image inputs must move the package
+  version, the manifest tag and the advertised MCP server version together
+  (CI guard in #19); knowledge-mcp gets the same guard at its next bump.
