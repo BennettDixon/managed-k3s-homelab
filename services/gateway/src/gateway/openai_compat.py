@@ -32,9 +32,13 @@ ACCEPTED_FIELDS: frozenset[str] = frozenset(
     }
 )
 # Ignored and never recorded (spec §3 / §9.3).
-IGNORED_NEVER_RECORDED: frozenset[str] = frozenset({"user", "metadata", "store", "stream_options"})
+IGNORED_NEVER_RECORDED: frozenset[str] = frozenset({"user", "metadata", "store"})
 # Stripped with X-Gateway-Ignored (spec §3).
-STRIPPED_SAMPLING: tuple[str, ...] = ("temperature", "top_p", "presence_penalty", "frequency_penalty")
+# ... plus stream_options: usage always rides the final chunk of the buffered stream.
+STRIPPED_SAMPLING: tuple[str, ...] = ("temperature", "top_p", "presence_penalty", "frequency_penalty", "stream_options")
+# The keys an OpenAI SDK serialises on the assistant message it hands back
+# (spec §2 "zero client changes"): accepted only when null or empty.
+ASSISTANT_ROUND_TRIP: frozenset[str] = frozenset({"refusal", "tool_calls", "function_call", "annotations", "audio"})
 JSON_OBJECT_INSTRUCTION = "Respond with a single valid JSON object and nothing else."
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
 MAX_STOP_SEQUENCES = 4
@@ -100,10 +104,13 @@ def _parse_messages(raw_messages: list[object]) -> tuple[ChatMessage, ...]:
         where = f"messages[{index}]"
         if not isinstance(item, dict):
             raise schema(f"{where} must be an object", param=where)
-        for key in item:
-            if key not in ("role", "content"):
-                raise unsupported(f"{where}.{key} is not supported", param=f"{where}.{key}")
         role = item.get("role")
+        for key, value in item.items():
+            if key in ("role", "content"):
+                continue
+            if role == "assistant" and key in ASSISTANT_ROUND_TRIP and value in (None, [], {}):
+                continue  # our own reply echoed back by a stock client
+            raise unsupported(f"{where}.{key} is not supported", param=f"{where}.{key}")
         if role in ("tool", "function"):
             raise unsupported(f"{where}.role {role!r}: tools are not supported", param=f"{where}.role")
         if role not in ("system", "developer", "user", "assistant"):
@@ -155,7 +162,7 @@ def parse_chat_request(raw: object) -> ParsedChat:
         elif key in IGNORED_NEVER_RECORDED:
             continue
         elif key == "n":
-            if value not in (None, 1):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value != 1):
                 raise unsupported("n > 1 is not supported", param="n")
         elif key == "logprobs":
             if value not in (None, False):
@@ -264,7 +271,7 @@ def translate(parsed: ParsedChat, registry: Registry, project: Project) -> Trans
 
 
 def finish_reason(stop_reason: str | None) -> str:
-    if stop_reason == "max_tokens":
+    if stop_reason in ("max_tokens", "model_context_window_exceeded"):
         return "length"
     if stop_reason == "refusal":
         return "content_filter"

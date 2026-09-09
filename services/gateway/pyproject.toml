@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
   "anthropic>=1.4.0,<2",
+  "httpx2>=2.12.0,<3",
   "starlette>=1.6.0,<2",
   "uvicorn>=0.52.4,<1",
   "pydantic>=2.13.5,<3",

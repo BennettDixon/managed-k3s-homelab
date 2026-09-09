@@ -47,7 +47,7 @@ def test_accepts_the_subset_and_strips_sampling_params() -> None:
             "stream": True,
         }
     )
-    assert parsed.ignored == ("temperature", "top_p", "presence_penalty")  # a null value is not stripped
+    assert parsed.ignored == ("temperature", "top_p", "presence_penalty", "stream_options")  # null: not stripped
     assert parsed.max_tokens == 50
     assert parsed.stop == ("END",)
     assert parsed.reasoning_effort == "high"
@@ -80,7 +80,30 @@ def test_rejects_by_name(field: str, value: object) -> None:
 
 def test_n_and_logprobs_only_in_their_trivial_forms() -> None:
     assert err({**BASIC, "n": 2}).param == "n"
+    assert err({**BASIC, "n": True}).param == "n"
+    assert err({**BASIC, "n": 1.0}).param == "n"
+    assert parse_chat_request({**BASIC, "n": 1}).model == "haiku"
+    assert parse_chat_request({**BASIC, "n": None}).model == "haiku"
     assert err({**BASIC, "logprobs": True}).param == "logprobs"
+
+
+def test_our_own_reply_round_trips_through_a_stock_client() -> None:
+    echoed: dict[str, object] = {
+        "role": "assistant",
+        "content": "hi",
+        "refusal": None,
+        "tool_calls": None,
+        "function_call": None,
+        "annotations": [],
+        "audio": None,
+    }
+    parsed = parse_chat_request(
+        {"messages": [{"role": "user", "content": "u"}, echoed, {"role": "user", "content": "v"}]}
+    )
+    assert [m.role for m in parsed.messages] == ["user", "assistant", "user"]
+    e = err({"messages": [{"role": "user", "content": "u"}, {**echoed, "tool_calls": [{"id": "x"}]}]})
+    assert e.code == "E_UNSUPPORTED" and e.param == "messages[1].tool_calls"
+    assert err({"messages": [{"role": "user", "content": "u", "refusal": None}]}).param == "messages[0].refusal"
 
 
 def test_strict_types_no_coercion() -> None:
@@ -219,6 +242,7 @@ def test_response_shapes() -> None:
     assert finish_reason("stop_sequence") == "stop"
     assert finish_reason("max_tokens") == "length"
     assert finish_reason("refusal") == "content_filter"
+    assert finish_reason("model_context_window_exceeded") == "length"
     assert finish_reason(None) == "stop"
     body = completion_body(
         request_id="01ABC", created=1, model="m", text="hi", stop_reason="max_tokens", usage=usage, gateway={"x": 1}

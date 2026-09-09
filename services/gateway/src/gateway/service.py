@@ -1,10 +1,17 @@
 """One chat completion, end to end (spec §3, §5, §6.1, §6.3).
 
 ``prepare`` runs everything up to and including the reservation — headers,
-the OpenAI subset, routing, the worst case, the compare-and-add — and raises
-a GatewayError with no row written on any refusal. ``execute`` makes the one
-provider call and settles or releases. The upstream client is used only from
-here, after a row exists: no code path reaches a provider without a row.
+the OpenAI subset, routing, a count-independent pre-admission, the worst
+case, the compare-and-add — and raises a GatewayError with no row written on
+any refusal. ``execute`` makes the one provider call and settles or releases.
+The upstream client is used only from here, after a row exists: no code path
+reaches a provider without a row, and no refusal reaches a provider at all.
+
+Cancellation discipline: ledger writes from async code run on a worker
+thread under ``asyncio.shield`` so a cancelled request (client gone, pod
+shutting down) can never drop a queued money write; the abort itself is a
+synchronous write so a cancel scope re-delivering ``CancelledError`` at
+every await cannot interrupt it.
 """
 
 from __future__ import annotations
@@ -12,9 +19,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Any, TypeVar
 
 from gateway.config import Config
-from gateway.errors import GatewayError, forbidden, ledger_unavailable, schema
+from gateway.errors import GatewayError, forbidden, ledger_unavailable, ledger_unavailable_after_call, schema
 from gateway.ids import JOB_ID_RE
 from gateway.jsonlog import Log
 from gateway.lanes import MeteredLane
@@ -30,6 +38,7 @@ from gateway.ledger import (
 from gateway.metrics import Metrics
 from gateway.money import (
     MoneyError,
+    ceil_div,
     component_micro,
     heuristic_input_tokens,
     micro_to_usd_float,
@@ -42,11 +51,32 @@ from gateway.openai_compat import completion_body, parse_chat_request, stream_pa
 from gateway.registry import Caller, Model, Project, Registry
 from gateway.upstream import MeteredClient, UpstreamFailure, UpstreamRequest, UpstreamResult
 
+T = TypeVar("T")
+
 RETRY_AFTER_MAX_S = 10.0
 # Grace beyond the provider timeout so the SDK's own timeout fires first (tests set it to 0).
 TIMEOUT_MARGIN_S = 5
 COUNT_TOKENS_TIMEOUT_S = 10.0
 MAX_TIMEOUT_S = 600
+# No estimate can be lower than the +32 margin: the pre-admission floor (spec §5).
+FLOOR_INPUT_TOKENS = reserve_input_tokens(0)
+# Only these outcomes leave the caller's money intact, so only they may invite a retry.
+RETRYABLE_RELEASED_KINDS = frozenset({"rate_limited", "spend_limit", "server", "network"})
+
+
+@dataclass(frozen=True)
+class Admission:
+    """Everything decided before any provider contact."""
+
+    caller: Caller
+    project: Project
+    job_id: str | None
+    lane_requested: str
+    lane_used: str
+    fallback_from: str | None
+    model: Model
+    cap_micro: int
+    max_tokens: int
 
 
 @dataclass(frozen=True)
@@ -94,6 +124,10 @@ class GatewayService:
         self._log = log
         self._now = now_ms
 
+    async def _ledger_call(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """A ledger call from async code: worker thread, shielded from cancellation."""
+        return await asyncio.shield(asyncio.to_thread(fn, *args, **kwargs))
+
     # ----------------------------------------------------------------- headers
 
     def project_for(self, caller: Caller, headers: Mapping[str, str]) -> Project:
@@ -123,10 +157,7 @@ class GatewayService:
             cap = usd_to_micro(raw)
         except MoneyError as err:
             raise GatewayError(
-                "E_BUDGET_CAP_INVALID",
-                400,
-                f"X-Gateway-Budget-Cap-USD: {err}",
-                param="X-Gateway-Budget-Cap-USD",
+                "E_BUDGET_CAP_INVALID", 400, f"X-Gateway-Budget-Cap-USD: {err}", param="X-Gateway-Budget-Cap-USD"
             ) from err
         # Tightest wins (spec §5): the env fat-finger guard, the caller's ceiling, the project's.
         ceiling = min(self._config.max_request_cap_micro, project.max_request_cap_micro)
@@ -136,7 +167,7 @@ class GatewayService:
             raise GatewayError(
                 "E_BUDGET_CAP_INVALID",
                 400,
-                f"X-Gateway-Budget-Cap-USD must be in [0, {micro_to_usd_str(ceiling)}] for this caller",
+                f"X-Gateway-Budget-Cap-USD must be in [0, {micro_to_usd_str(ceiling)}] for this caller and project",
                 param="X-Gateway-Budget-Cap-USD",
             )
         return cap
@@ -229,7 +260,86 @@ class GatewayService:
             )
         return "metered", fallback_from
 
-    # ----------------------------------------------------------------- prepare
+    # ----------------------------------------------------------------- admission
+
+    def _reserve_input(self, adm: Admission, in_tokens: int) -> ReserveInput:
+        prices = adm.model.prices
+        multiplier = self._config.billed_price_multiplier_pct
+        in_cost_list = component_micro(in_tokens, prices.input)
+        in_cost_billed = component_micro(in_tokens, prices.input, multiplier)
+        return ReserveInput(
+            caller_id=adm.caller.id,
+            caller_class=adm.caller.class_,
+            project_id=adm.project.id,
+            job_id=adm.job_id,
+            lane_requested=adm.lane_requested,
+            lane_used=adm.lane_used,
+            fallback=adm.fallback_from is not None,
+            model=adm.model.id,
+            cap_presented_micro=adm.cap_micro,
+            reserved_micro=in_cost_billed + component_micro(adm.max_tokens, prices.output, multiplier),
+            list_reserved_micro=in_cost_list + component_micro(adm.max_tokens, prices.output),
+            max_tokens=adm.max_tokens,
+            in_tokens=in_tokens,
+            in_cost_billed_micro=in_cost_billed,
+            in_cost_list_micro=in_cost_list,
+            output_price_micro_per_mtok=prices.output,
+            billed_multiplier_pct=multiplier,
+            project_cap_micro=adm.project.cap_micro,
+            caller_day_cap_micro=adm.caller.max_day_billed_micro,
+            brake_cap_micro=self._config.metered_daily_ceiling_micro,
+        )
+
+    def _ledger_error(self, err: Exception, adm: Admission) -> GatewayError:
+        """Map a ledger admission exception onto the §3 taxonomy (metrics + log included)."""
+        lane, project, job_id = adm.lane_used, adm.project.id, adm.job_id
+        if isinstance(err, BudgetRefusal):
+            outcome = "refused_cap" if err.scope in ("request", "job") else "refused_budget"
+            self._metrics.requests_total.labels(lane, project, outcome).inc()
+            self._metrics.refusals_total.labels(err.scope).inc()
+            self._log(
+                "refuse",
+                caller_id=adm.caller.id,
+                project=project,
+                job_id=job_id,
+                lane=lane,
+                model=adm.model.id,
+                scope=err.scope,
+                basis=err.basis,
+                would_reserve_usd=micro_to_usd_str(err.would_reserve_micro),
+                remaining_usd=micro_to_usd_str(err.remaining_micro),
+            )
+            return GatewayError(
+                "E_BUDGET_EXCEEDED",
+                402,
+                f"budget exceeded on scope {err.scope}: reserving "
+                f"{micro_to_usd_str(err.would_reserve_micro)} USD ({err.basis}) against "
+                f"{micro_to_usd_str(err.remaining_micro)} USD remaining",
+                retryable=False,
+                extra={
+                    "scope": err.scope,
+                    "basis": err.basis,
+                    "remaining_usd": micro_to_usd_float(err.remaining_micro),
+                    "would_reserve_usd": micro_to_usd_float(err.would_reserve_micro),
+                    "affordable_max_tokens": err.affordable_max_tokens,
+                },
+            )
+        if isinstance(err, JobCapMismatch):
+            self._metrics.requests_total.labels(lane, project, "rejected").inc()
+            return GatewayError(
+                "E_JOB_CAP_MISMATCH",
+                409,
+                f"job {job_id} is pinned to cap {micro_to_usd_str(err.pinned_micro)} USD",
+                param="X-Gateway-Budget-Cap-USD",
+                extra={"pinned_cap_usd": micro_to_usd_float(err.pinned_micro)},
+            )
+        if isinstance(err, ClockGuardTripped):
+            self._log("clock_guard", error=str(err))
+            return ledger_unavailable("clock guard: no reservations until the clock catches up")
+        if isinstance(err, LedgerUnavailable):
+            self._log("ledger_write_failed", error=str(err))
+            return ledger_unavailable("ledger write failed; no call was made")
+        raise err
 
     async def _estimate_input_tokens(self, request: UpstreamRequest) -> int:
         try:
@@ -252,86 +362,33 @@ class GatewayService:
         translated = translate(parsed, self._registry, project)
         model = translated.model
         lane_used, fallback_from = self.route(caller, project, model, lane_requested, pinned, fallback_wanted, now)
-
-        in_tokens = await self._estimate_input_tokens(translated.request)
-        prices = model.prices
-        multiplier = self._config.billed_price_multiplier_pct
-        max_tokens = translated.request.max_tokens
-        in_cost_list = component_micro(in_tokens, prices.input)
-        in_cost_billed = component_micro(in_tokens, prices.input, multiplier)
-        list_reserved = in_cost_list + component_micro(max_tokens, prices.output)
-        billed_reserved = in_cost_billed + component_micro(max_tokens, prices.output, multiplier)
-
-        inp = ReserveInput(
-            caller_id=caller.id,
-            caller_class=caller.class_,
-            project_id=project.id,
+        adm = Admission(
+            caller=caller,
+            project=project,
             job_id=job_id,
             lane_requested=lane_requested,
             lane_used=lane_used,
-            fallback=fallback_from is not None,
-            model=model.id,
-            cap_presented_micro=cap_micro,
-            reserved_micro=billed_reserved,
-            list_reserved_micro=list_reserved,
-            max_tokens=max_tokens,
-            in_tokens=in_tokens,
-            in_cost_billed_micro=in_cost_billed,
-            in_cost_list_micro=in_cost_list,
-            output_price_micro_per_mtok=prices.output,
-            billed_multiplier_pct=multiplier,
-            project_cap_micro=project.cap_micro,
-            caller_day_cap_micro=caller.max_day_billed_micro,
-            brake_cap_micro=self._config.metered_daily_ceiling_micro,
+            fallback_from=fallback_from,
+            model=model,
+            cap_micro=cap_micro,
+            max_tokens=translated.request.max_tokens,
         )
+
+        # Pre-admission on a count-independent floor (spec §5: refusals call
+        # nothing): the brake latch, the job-cap pin and every cap are checked
+        # against the smallest reservation any token count could produce, so a
+        # request that cannot be admitted never ships its prompt to count_tokens.
         try:
-            reservation = await asyncio.to_thread(self._ledger.reserve, inp)
-        except BudgetRefusal as refusal:
-            outcome = "refused_cap" if refusal.scope in ("request", "job") else "refused_budget"
-            self._metrics.requests_total.labels(lane_used, project.id, outcome).inc()
-            self._metrics.refusals_total.labels(refusal.scope).inc()
-            self._log(
-                "refuse",
-                caller_id=caller.id,
-                project=project.id,
-                job_id=job_id,
-                lane=lane_used,
-                model=model.id,
-                scope=refusal.scope,
-                basis=refusal.basis,
-                would_reserve_usd=micro_to_usd_str(refusal.would_reserve_micro),
-                remaining_usd=micro_to_usd_str(refusal.remaining_micro),
-            )
-            raise GatewayError(
-                "E_BUDGET_EXCEEDED",
-                402,
-                f"budget exceeded on scope {refusal.scope}: reserving "
-                f"{micro_to_usd_str(refusal.would_reserve_micro)} USD ({refusal.basis}) against "
-                f"{micro_to_usd_str(refusal.remaining_micro)} USD remaining",
-                retryable=False,
-                extra={
-                    "scope": refusal.scope,
-                    "basis": refusal.basis,
-                    "remaining_usd": micro_to_usd_float(refusal.remaining_micro),
-                    "would_reserve_usd": micro_to_usd_float(refusal.would_reserve_micro),
-                    "affordable_max_tokens": refusal.affordable_max_tokens,
-                },
-            ) from refusal
-        except JobCapMismatch as mismatch:
-            self._metrics.requests_total.labels(lane_used, project.id, "rejected").inc()
-            raise GatewayError(
-                "E_JOB_CAP_MISMATCH",
-                409,
-                f"job {job_id} is pinned to cap {micro_to_usd_str(mismatch.pinned_micro)} USD",
-                param="X-Gateway-Budget-Cap-USD",
-                extra={"pinned_cap_usd": micro_to_usd_float(mismatch.pinned_micro)},
-            ) from mismatch
-        except ClockGuardTripped as guard:
-            self._log("clock_guard", error=str(guard))
-            raise ledger_unavailable("clock guard: no reservations until the clock catches up") from guard
-        except LedgerUnavailable as err:
-            self._log("ledger_write_failed", error=str(err))
-            raise ledger_unavailable("ledger write failed; no call was made") from err
+            await self._ledger_call(self._ledger.preadmit, self._reserve_input(adm, FLOOR_INPUT_TOKENS))
+        except (BudgetRefusal, JobCapMismatch, ClockGuardTripped, LedgerUnavailable) as err:
+            raise self._ledger_error(err, adm) from err
+
+        in_tokens = await self._estimate_input_tokens(translated.request)
+        inp = self._reserve_input(adm, in_tokens)
+        try:
+            reservation = await self._ledger_call(self._ledger.reserve, inp)
+        except (BudgetRefusal, JobCapMismatch, ClockGuardTripped, LedgerUnavailable) as err:
+            raise self._ledger_error(err, adm) from err
 
         if fallback_from is not None:
             self._metrics.fallback_total.labels(fallback_from, lane_used, project.id).inc()
@@ -345,9 +402,9 @@ class GatewayService:
             fallback_from=fallback_from,
             model=model.id,
             in_tokens=in_tokens,
-            max_tokens=max_tokens,
-            reserved_usd=micro_to_usd_str(billed_reserved),
-            list_reserved_usd=micro_to_usd_str(list_reserved),
+            max_tokens=inp.max_tokens,
+            reserved_usd=micro_to_usd_str(inp.reserved_micro),
+            list_reserved_usd=micro_to_usd_str(inp.list_reserved_micro),
             cap_usd=micro_to_usd_str(cap_micro),
         )
         return Prepared(
@@ -369,7 +426,7 @@ class GatewayService:
 
     @staticmethod
     def _retry_once(failure: UpstreamFailure) -> bool:
-        """Exactly one gateway retry: a 429 with Retry-After <= 10 s, or a connection refused before the body."""
+        """Exactly one gateway retry: a 429 with Retry-After <= 10 s, or a refused connection."""
         if failure.kind == "rate_limited":
             return (
                 failure.before_generation
@@ -386,12 +443,16 @@ class GatewayService:
         async def on_started() -> None:
             nonlocal started
             started = True
-            await asyncio.to_thread(self._ledger.mark_upstream_started, request_id)
+            await self._ledger_call(self._ledger.mark_upstream_started, request_id)
 
         attempt = 0
+        delay = 0.0
         while True:
             attempt += 1
             try:
+                if delay:
+                    # Inside the try so a cancellation during the retry wait still reaches the abort.
+                    await asyncio.sleep(delay)
                 result = await asyncio.wait_for(
                     self._upstream.complete(
                         prepared.request, on_started=on_started, timeout_s=float(prepared.timeout_s)
@@ -401,14 +462,14 @@ class GatewayService:
                 break
             except UpstreamFailure as failure:
                 if attempt == 1 and self._retry_once(failure):
-                    self._log("upstream_retry", request_id=request_id, kind=failure.kind)
-                    await asyncio.sleep(min(failure.retry_after_s or 0.0, RETRY_AFTER_MAX_S))
+                    delay = min(failure.retry_after_s or 0.0, RETRY_AFTER_MAX_S)
+                    self._log("upstream_retry", request_id=request_id, kind=failure.kind, delay_s=delay)
                     continue
                 raise await self._fail(prepared, failure, started, started_at) from failure
             except TimeoutError as err:
                 raise await self._timeout(prepared, started_at) from err
             except asyncio.CancelledError:
-                await self._abort(prepared, started_at)
+                self._abort_sync(prepared, started_at)
                 raise
         return await self._settle(prepared, result, started_at)
 
@@ -418,10 +479,10 @@ class GatewayService:
         if outcome not in ("release", "timeout", "aborted"):
             raise ValueError(outcome)
         try:
-            res = await asyncio.to_thread(
+            res = await self._ledger_call(
                 self._ledger.finish_without_usage,
                 prepared.reservation.id,
-                outcome,  # type: ignore[arg-type]
+                outcome,
                 error_code=error_code,
                 http_status=http_status,
                 latency_ms=latency_ms,
@@ -442,54 +503,81 @@ class GatewayService:
         )
         return res.state
 
+    def _abort_sync(self, prepared: Prepared, started_at: int) -> None:
+        """Cancellation path (client gone, pod shutting down): one synchronous ledger write.
+
+        No await here: an anyio cancel scope re-delivers ``CancelledError`` at
+        every checkpoint, which would cancel a queued ``to_thread`` write and
+        strand the row as ``reserved`` until the next boot sweep.
+        """
+        latency = self._now() - started_at
+        lane, project = prepared.lane_used, prepared.project.id
+        try:
+            res = self._ledger.finish_without_usage(
+                prepared.reservation.id, "aborted", error_code="E_ABORTED", http_status=499, latency_ms=latency
+            )
+        except LedgerUnavailable as err:
+            self._log("finish_write_failed", request_id=prepared.reservation.id, error=str(err))
+            return
+        self._log(
+            "settle",
+            request_id=prepared.reservation.id,
+            state=res.state,
+            error_code="E_ABORTED",
+            http_status=499,
+            settled_usd=micro_to_usd_str(res.settled_micro),
+            list_usd=micro_to_usd_str(res.list_micro),
+            latency_ms=latency,
+        )
+        self._metrics.requests_total.labels(lane, project, "upstream_error").inc()
+        self._metrics.request_duration.labels(lane).observe(latency / 1000)
+
     async def _fail(self, prepared: Prepared, failure: UpstreamFailure, started: bool, started_at: int) -> GatewayError:
         now = self._now()
         latency = now - started_at
-        lane = prepared.lane_used
-        project = prepared.project.id
+        lane, project = prepared.lane_used, prepared.project.id
         self._metrics.upstream_errors_total.labels(lane, failure.kind).inc()
-        headers: dict[str, str] = {}
-        if failure.kind == "rate_limited":
-            code, status, retryable = "E_UPSTREAM_RATE_LIMITED", 429, True
-            headers["retry-after"] = str(max(1, int(-(-(failure.retry_after_s or 1.0) // 1))))
-        elif failure.kind == "spend_limit":
-            code, status, retryable = "E_LANE_UNAVAILABLE", 503, True
-            resume = now + int((failure.retry_after_s or 3600.0) * 1000)
-            self._lane.record_spend_limit(now, resume)
-            headers["retry-after"] = str(max(1, int(failure.retry_after_s or 3600.0)))
-        elif failure.kind == "auth":
-            code, status, retryable = "E_UPSTREAM_AUTH", 502, False
-            self._lane.record_auth_failure(now)
-        elif failure.kind == "rejected":
-            code, status, retryable = "E_UPSTREAM_ERROR", 502, False
-        elif failure.kind == "timeout":
-            code, status, retryable = "E_TIMEOUT", 504, False
-        elif failure.kind in ("server", "network"):
-            code, status = "E_UPSTREAM_ERROR", 502
-            retryable = failure.proves_no_generation and not started
-            if retryable:
-                self._lane.record_transport_failure(now)
-        else:
-            code, status, retryable = "E_UPSTREAM_ERROR", 502, False
 
+        # The ledger outcome decides everything else: only a proven no-generation
+        # outcome releases, and only a released row may invite a retry.
         release = failure.proves_no_generation and not started
         outcome = "release" if release else ("timeout" if failure.kind == "timeout" else "aborted")
+        headers: dict[str, str] = {}
+        if failure.kind == "rate_limited":
+            code, status = "E_UPSTREAM_RATE_LIMITED", 429
+            headers["retry-after"] = str(max(1, ceil_div(int((failure.retry_after_s or 1.0) * 1000), 1000)))
+        elif failure.kind == "spend_limit":
+            code, status = "E_LANE_UNAVAILABLE", 503
+            self._lane.record_spend_limit(now, now + int((failure.retry_after_s or 3600.0) * 1000))
+            headers["retry-after"] = str(max(1, int(failure.retry_after_s or 3600.0)))
+        elif failure.kind == "auth":
+            code, status = "E_UPSTREAM_AUTH", 502
+            self._lane.record_auth_failure(now)
+        elif failure.kind == "timeout":
+            code, status = "E_TIMEOUT", 504
+        else:  # rejected, server, network, bad_response
+            code, status = "E_UPSTREAM_ERROR", 502
+            if release and failure.kind in ("server", "network"):
+                self._lane.record_transport_failure(now)
+        retryable = release and failure.kind in RETRYABLE_RELEASED_KINDS
+
         await self._finish(prepared, outcome, error_code=code, http_status=status, latency_ms=latency)
         self._metrics.requests_total.labels(
-            lane, project, "timeout" if failure.kind == "timeout" else "upstream_error"
+            lane, project, "timeout" if outcome == "timeout" else "upstream_error"
         ).inc()
         self._metrics.request_duration.labels(lane).observe(latency / 1000)
+        if release:
+            detail = "reservation released"
+        elif outcome == "timeout":
+            detail = "settled at the reservation (provider read timeout)"
+        else:
+            detail = "settled at the reservation (the provider may have generated)"
         message = {
-            "E_UPSTREAM_RATE_LIMITED": "provider rate limited the request; reservation released",
-            "E_LANE_UNAVAILABLE": "provider spend limit reached; lane down until the stated resume time",
-            "E_UPSTREAM_AUTH": "provider rejected the gateway's credential; lane down",
-            "E_TIMEOUT": "provider call timed out; settled at the reservation",
-        }.get(
-            code,
-            "provider error before generation; reservation released"
-            if release
-            else "provider error; settled at the reservation",
-        )
+            "E_UPSTREAM_RATE_LIMITED": f"provider rate limited the request; {detail}",
+            "E_LANE_UNAVAILABLE": f"provider spend limit reached; lane down until the stated resume time; {detail}",
+            "E_UPSTREAM_AUTH": f"provider rejected the gateway's credential; lane down; {detail}",
+            "E_TIMEOUT": f"provider call timed out; {detail}",
+        }.get(code, f"provider error ({failure.kind}); {detail}")
         return GatewayError(code, status, message, retryable=retryable, headers=headers)
 
     async def _timeout(self, prepared: Prepared, started_at: int) -> GatewayError:
@@ -500,11 +588,6 @@ class GatewayService:
         self._metrics.request_duration.labels(prepared.lane_used).observe(latency / 1000)
         return GatewayError("E_TIMEOUT", 504, "provider call timed out; settled at the reservation", retryable=False)
 
-    async def _abort(self, prepared: Prepared, started_at: int) -> None:
-        latency = self._now() - started_at
-        await self._finish(prepared, "aborted", error_code="E_ABORTED", http_status=499, latency_ms=latency)
-        self._metrics.requests_total.labels(prepared.lane_used, prepared.project.id, "upstream_error").inc()
-
     async def _settle(self, prepared: Prepared, result: UpstreamResult, started_at: int) -> Completed:
         now = self._now()
         latency = now - started_at
@@ -512,11 +595,12 @@ class GatewayService:
         multiplier = self._config.billed_price_multiplier_pct
         list_micro = usage_cost_micro(result.usage, prices)
         billed_micro = usage_cost_micro(result.usage, prices, multiplier)
+        usage = result.usage
         try:
-            res = await asyncio.to_thread(
+            res = await self._ledger_call(
                 self._ledger.settle,
                 prepared.reservation.id,
-                usage=result.usage,
+                usage=usage,
                 settled_micro=billed_micro,
                 list_micro=list_micro,
                 model_used=result.model_used,
@@ -527,18 +611,30 @@ class GatewayService:
             )
         except LedgerUnavailable as err:
             # The generation happened and was billed; the row stays reserved and
-            # is swept at the reservation on the next boot (over-count, never under).
-            self._log("settle_write_failed", request_id=prepared.reservation.id, error=str(err))
-            raise ledger_unavailable("ledger write failed after the provider call") from err
-        lane = prepared.lane_used
-        project = prepared.project.id
+            # is swept at the reservation on the next boot (over-count, never
+            # under). The usage goes to the log so the sweep can be reconciled,
+            # and the answer is NOT retryable: a retry would be a second spend.
+            self._log(
+                "settle_write_failed",
+                request_id=prepared.reservation.id,
+                error=str(err),
+                billed_usd=micro_to_usd_str(billed_micro),
+                list_usd=micro_to_usd_str(list_micro),
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_write_5m_tokens=usage.cache_write_5m_tokens,
+                cache_write_1h_tokens=usage.cache_write_1h_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                provider_request_id=result.provider_request_id,
+            )
+            raise ledger_unavailable_after_call() from err
+        lane, project = prepared.lane_used, prepared.project.id
         self._lane.record_success(now)
         self._metrics.requests_total.labels(lane, project, "ok").inc()
         self._metrics.request_duration.labels(lane).observe(latency / 1000)
         if res.applied:
             self._metrics.billed_usd_total.labels(lane, project).inc(micro_to_usd_float(billed_micro))
             self._metrics.list_usd_total.labels(lane, project).inc(micro_to_usd_float(list_micro))
-            usage = result.usage
             for kind, count in (
                 ("input", usage.input_tokens),
                 ("output", usage.output_tokens),
@@ -564,14 +660,14 @@ class GatewayService:
             list_usd=micro_to_usd_str(list_micro),
             reserved_usd=micro_to_usd_str(prepared.reservation.reserved_micro),
             over_reserve=res.over_reserve,
-            input_tokens=result.usage.input_tokens,
-            output_tokens=result.usage.output_tokens,
-            cache_read_tokens=result.usage.cache_read_tokens,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_tokens=usage.cache_read_tokens,
             provider_request_id=result.provider_request_id,
             latency_ms=latency,
         )
 
-        period_totals = await asyncio.to_thread(self._ledger.project_totals, project, prepared.reservation.period)
+        period_totals = await self._ledger_call(self._ledger.project_totals, project, prepared.reservation.period)
         remaining = max(0, prepared.project.cap_micro - period_totals.committed("billed"))
         headers: dict[str, str] = {
             "X-Gateway-Request-Id": prepared.reservation.id,
@@ -589,7 +685,7 @@ class GatewayService:
             "ignored": list(prepared.ignored),
         }
         if prepared.job_id is not None:
-            job_totals = await asyncio.to_thread(self._ledger.job_totals, prepared.caller.id, prepared.job_id)
+            job_totals = await self._ledger_call(self._ledger.job_totals, prepared.caller.id, prepared.job_id)
             headers["X-Gateway-Job-Spent-USD"] = micro_to_usd_str(job_totals.settled_list)
             gateway["job_spent_usd"] = micro_to_usd_float(job_totals.settled_list)
         if prepared.fallback_from is not None:
@@ -604,7 +700,7 @@ class GatewayService:
             model=result.model_used,
             text=result.text,
             stop_reason=result.stop_reason,
-            usage=result.usage,
+            usage=usage,
             gateway=gateway,
         )
         sse = stream_payloads(
@@ -613,7 +709,7 @@ class GatewayService:
             model=result.model_used,
             text=result.text,
             stop_reason=result.stop_reason,
-            usage=result.usage,
+            usage=usage,
             gateway=gateway,
         )
         return Completed(body=body, headers=headers, sse=sse)

@@ -23,6 +23,7 @@ class FakeReply:
     request_id: str = "req_fake"
     stop_reason: str = "end_turn"
     inference_geo: str | None = None
+    delay_s: float = 0.0  # after message_start, before the reply (disconnect / cancellation tests)
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,8 @@ class FakeMeteredClient:
             )
         self.generations += 1
         await on_started()
+        if outcome.delay_s:
+            await asyncio.sleep(outcome.delay_s)
         return UpstreamResult(
             text=outcome.text,
             stop_reason=outcome.stop_reason,

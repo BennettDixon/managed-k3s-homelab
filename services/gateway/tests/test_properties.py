@@ -282,8 +282,6 @@ def test_crash_between_any_two_statements_leaves_no_reserved_row_after_restart(t
         # Every row that a call reported as committed survived the crash.
         for rid, want in expected.items():
             assert rid in rows, (crash_after, rid, want)
-        assert (
-            swept.count == sum(1 for want in expected.values() if want == "reserved")
-            or any(row["state"] == "swept" for row in rows.values())
-            or swept.count == 0
-        )
+        # A reserve that returned had committed (COMMIT is its last statement), so
+        # the rows a call reported as reserved are exactly the rows the sweep finds.
+        assert swept.count == sum(1 for want in expected.values() if want == "reserved"), crash_after

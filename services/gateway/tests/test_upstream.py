@@ -4,9 +4,11 @@ import pytest
 
 from gateway.upstream import (
     ANTHROPIC_BASE_URL,
+    CONNECT_TIMEOUT_S,
     AnthropicMeteredClient,
     UpstreamFailure,
     UpstreamRequest,
+    call_timeout,
     classify_failure,
     parse_retry_after,
 )
@@ -58,9 +60,58 @@ def test_server_errors_release_only_before_generation(cls: type[anthropic.APISta
     assert after.kind == "server" and not after.proves_no_generation
 
 
-def test_timeout_never_proves_no_generation() -> None:
-    err = classify_failure(anthropic.APITimeoutError(request=REQUEST), started=False)
-    assert err.kind == "timeout" and not err.proves_no_generation
+def test_read_timeout_never_proves_no_generation() -> None:
+    err = anthropic.APITimeoutError(request=REQUEST)
+    err.__cause__ = httpx2.ReadTimeout("read")
+    failure = classify_failure(err, started=False)
+    assert failure.kind == "timeout" and not failure.proves_no_generation
+    assert classify_failure(anthropic.APITimeoutError(request=REQUEST), started=False).kind == "timeout"
+
+
+@pytest.mark.parametrize("cause", [httpx2.ConnectTimeout("connect"), httpx2.PoolTimeout("pool")])
+def test_connect_phase_timeouts_release_like_a_refused_connection(cause: Exception) -> None:
+    err = anthropic.APITimeoutError(request=REQUEST)
+    err.__cause__ = cause
+    failure = classify_failure(err, started=False)
+    assert failure.kind == "network" and failure.before_generation and failure.proves_no_generation
+    assert not classify_failure(err, started=True).proves_no_generation
+
+
+def test_billing_error_is_the_spend_limit_not_the_key() -> None:
+    response = httpx2.Response(403, request=REQUEST)
+    err = anthropic.PermissionDeniedError(
+        "credit", response=response, body={"error": {"type": "billing_error", "message": "credit balance"}}
+    )
+    failure = classify_failure(err, started=False)
+    assert failure.kind == "spend_limit" and failure.error_type == "billing_error"
+
+
+@pytest.mark.parametrize(
+    ("error_type", "kind"),
+    [
+        ("overloaded_error", "server"),
+        ("api_error", "server"),
+        ("rate_limit_error", "rate_limited"),
+        ("authentication_error", "auth"),
+        ("billing_error", "spend_limit"),
+        ("invalid_request_error", "rejected"),
+        ("mystery", "rejected"),
+    ],
+)
+def test_in_stream_error_events_are_classified_by_type(error_type: str, kind: str) -> None:
+    # The SDK raises an `error` SSE event with the stream's own status (200).
+    response = httpx2.Response(200, request=REQUEST)
+    err = anthropic.APIStatusError("boom", response=response, body={"error": {"type": error_type, "message": "boom"}})
+    failure = classify_failure(err, started=False)
+    assert failure.kind == kind and failure.status == 200
+    assert failure.proves_no_generation
+    assert not classify_failure(err, started=True).proves_no_generation
+
+
+def test_call_timeout_bounds_the_connect_phase() -> None:
+    long = call_timeout(300.0)
+    assert long.connect == CONNECT_TIMEOUT_S and long.read == 300.0
+    assert call_timeout(5.0).connect == 5.0
 
 
 def test_connection_refused_before_body_vs_severed_read() -> None:
@@ -103,7 +154,12 @@ def test_upstream_request_shapes() -> None:
         effort="low",
         json_schema={"type": "object"},
     )
-    assert req.text_bytes() == len(b"sys") + len("héllo".encode()) + len(b"ok")
+    schema_bytes = len(b'{"type":"object"}')
+    assert req.text_bytes() == len(b"sys") + len("héllo".encode()) + len(b"ok") + schema_bytes
+    with_stops = UpstreamRequest(
+        model="m", system=None, messages=(("user", "x"),), max_tokens=1, stop_sequences=("END",)
+    )
+    assert with_stops.text_bytes() == 1 + 3
     assert req.anthropic_messages() == [{"role": "user", "content": "héllo"}, {"role": "assistant", "content": "ok"}]
     assert req.output_config() == {"effort": "low", "format": {"type": "json_schema", "schema": {"type": "object"}}}
     assert UpstreamRequest(model="m", system=None, messages=(("user", "x"),), max_tokens=1).output_config() is None
@@ -116,6 +172,7 @@ def test_real_client_is_pinned_to_the_hardcoded_base_url_with_no_retries() -> No
     assert inner.max_retries == 0
     assert inner.api_key == "sk-ant-test"
     assert inner.auth_token is None
+    assert inner._client.trust_env is False  # no proxy / CA override from the pod environment
 
 
 def test_failure_message_and_flags() -> None:

@@ -14,6 +14,7 @@ import pytest
 from gateway import service as service_module
 from gateway.db import open_db
 from gateway.fake_upstream import FakeFailure, FakeHang, FakeMeteredClient, FakeReply, Outcome
+from gateway.http import build_app, classes_for
 from gateway.jsonlog import null_log
 from gateway.ledger import Ledger, SettleResult
 from gateway.money import TokenUsage, usage_cost_micro
@@ -82,6 +83,8 @@ async def test_auth_and_class_gates(harness: Harness) -> None:
     r = await harness.client.get("/nope")
     assert r.status_code == 404 and r.json()["error"]["code"] == "E_NOT_FOUND"
     r = await harness.client.get("/v1/chat/completions")
+    assert r.status_code == 401  # the gate runs before routing
+    r = await harness.client.get("/v1/chat/completions", headers=harness.headers())
     assert r.status_code == 405 and r.json()["error"]["code"] == "E_SCHEMA"
 
 
@@ -278,7 +281,7 @@ async def test_cap_zero_is_402_with_no_row_and_no_call(harness: Harness) -> None
     assert err["would_reserve_usd"] > 0
     assert r.headers["x-should-retry"] == "false"
     assert dump(harness.ledger) == before
-    assert harness.upstream.attempts == 0 and harness.upstream.count_tokens_calls == 1
+    assert harness.upstream.attempts == 0 and harness.upstream.count_tokens_calls == 0  # refusals call nothing
     text = (await harness.client.get("/metrics")).text
     assert 'gateway_requests_total{lane="metered",outcome="refused_cap",project="homelab-ops"} 1.0' in text
     assert 'gateway_refusals_total{scope="request"} 1.0' in text
@@ -314,6 +317,7 @@ async def test_streaming_is_buffered(harness: Harness) -> None:
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/event-stream")
         assert r.headers["x-gateway-stream"] == "buffered"
+        assert r.headers["x-gateway-ignored"] == "stream_options"
         request_id = r.headers["x-gateway-request-id"]
         assert "x-gateway-billed-usd" not in r.headers  # money rides the final chunk
         lines = [line async for line in r.aiter_lines() if line.startswith("data: ")]
@@ -345,8 +349,10 @@ async def test_job_flow_pin_spent_and_ledger_reads(harness: Harness) -> None:
     assert a.status_code == b.status_code == 200
     assert a.headers["x-gateway-job-spent-usd"] == "0.000150"  # 100 + 50
     assert b.headers["x-gateway-job-spent-usd"] == "0.000450"  # + 200 + 100
+    calls = harness.upstream.count_tokens_calls
     c = await harness.chat("n8n-executor", project="gateway-smoke", cap="0.06", extra=job)
     assert c.status_code == 409 and c.json()["error"]["code"] == "E_JOB_CAP_MISMATCH"
+    assert harness.upstream.count_tokens_calls == calls  # the pin is checked before count_tokens
     assert c.headers["x-should-retry"] == "false" and c.json()["error"]["pinned_cap_usd"] == 0.05
     read = await harness.client.get("/ledger/jobs/01JOB", headers=harness.headers("n8n-executor"))
     assert read.status_code == 200
@@ -580,7 +586,9 @@ async def test_brake_through_http(tmp_path: Path) -> None:
         r = await h.chat(cap="0.10", body=big)
         assert r.status_code == 402 and r.json()["error"]["scope"] == "brake_metered"
         assert 'gateway_brake_tripped{lane="metered"} 1.0' in (await h.client.get("/metrics")).text
+        calls = h.upstream.count_tokens_calls
         assert (await h.chat()).status_code == 402  # latched
+        assert h.upstream.count_tokens_calls == calls  # the latch refuses before count_tokens
         assert h.log.events("brake_tripped")
         r = await h.client.post(
             "/ledger/brake-reset", headers=h.headers(), json={"lane": "metered", "reason": "offender cancelled"}
@@ -594,6 +602,7 @@ async def test_caller_day_and_project_period_scopes_through_http(tmp_path: Path)
     async with harness_ctx(tmp_path, registry_yaml=yaml_day) as h:
         r = await h.chat()
         assert r.status_code == 402 and r.json()["error"]["scope"] == "caller_day"
+        assert h.upstream.count_tokens_calls == 0
     # gateway-smoke: period cap 100 micro-USD, per-request ceiling 50 micro-USD.
     yaml_project = REGISTRY_YAML.replace("cap_usd: 1.00,", "cap_usd: 0.0001,").replace(
         "max_request_cap_usd: 0.10", "max_request_cap_usd: 0.00005"
@@ -606,8 +615,10 @@ async def test_caller_day_and_project_period_scopes_through_http(tmp_path: Path)
         tiny = {"model": "haiku", "messages": [{"role": "user", "content": "x"}], "max_tokens": 1}
         for _ in range(2):
             assert (await h.chat("operator", project="gateway-smoke", cap="0.00005", body=tiny)).status_code == 200
+        calls = h.upstream.count_tokens_calls
         r = await h.chat("operator", project="gateway-smoke", cap="0.00005", body=tiny)
         assert r.status_code == 402 and r.json()["error"]["scope"] == "project_period"
+        assert h.upstream.count_tokens_calls == calls
         assert r.json()["error"]["remaining_usd"] == 3e-05
 
 
@@ -674,5 +685,88 @@ async def test_write_failure_after_the_call_leaves_the_row_for_the_sweep(
     monkeypatch.setattr(harness.ledger, "settle", broken_settle)
     r = await harness.chat()
     assert r.status_code == 503 and r.json()["error"]["code"] == "E_LEDGER_UNAVAILABLE"
-    assert harness.log.events("settle_write_failed")
+    assert r.json()["error"]["retryable"] is False and r.headers["x-should-retry"] == "false"
+    assert harness.log.events("settle_write_failed")[0]["output_tokens"] == 5
     assert harness.ledger.in_flight()[0] == 1  # swept at the next boot, over-counting
+
+
+# ------------------------------------------------------------------ review round additions
+
+
+async def test_over_reserve_settles_at_actual_and_moves_the_counter(harness: Harness) -> None:
+    # The reservation covers ~34 input tokens; the provider reports 100,000: settled > reserved.
+    harness.upstream.push(FakeReply(input_tokens=100_000, output_tokens=1))
+    r = await harness.chat(body={"model": "haiku", "messages": [{"role": "user", "content": "x"}], "max_tokens": 5})
+    assert r.status_code == 200
+    rec = row(harness, r.headers["x-gateway-request-id"])
+    settled, reserved = rec["settled_micro"], rec["reserved_micro"]
+    assert isinstance(settled, int) and isinstance(reserved, int)
+    assert settled == 100_005 and settled > reserved
+    assert harness.log.events("settle")[0]["over_reserve"] is True
+    assert "gateway_settle_over_reserve_total 1.0" in (await harness.client.get("/metrics")).text
+    assert harness.ledger.recompute_totals() == []
+
+
+async def test_operator_reads_other_callers_jobs(harness: Harness) -> None:
+    job = {"X-Gateway-Job-Id": "shared"}
+    assert (await harness.chat("n8n-executor", project="gateway-smoke", cap="0.05", extra=job)).status_code == 200
+    r = await harness.client.get("/ledger/jobs/shared", params={"caller": "n8n-executor"}, headers=harness.headers())
+    assert r.status_code == 200 and r.json()["caller_id"] == "n8n-executor" and r.json()["requests"] == 1
+    # An executor may not name anyone else; an operator may not name a caller outside its projects.
+    r = await harness.client.get(
+        "/ledger/jobs/shared", params={"caller": "operator"}, headers=harness.headers("n8n-executor")
+    )
+    assert r.status_code == 403
+    r = await harness.client.get("/ledger/jobs/shared", params={"caller": "sub-operator"}, headers=harness.headers())
+    assert r.status_code == 403
+    r = await harness.client.get("/ledger/jobs/shared", params={"caller": "nope"}, headers=harness.headers())
+    assert r.status_code == 403
+
+
+async def test_class_gate_covers_every_route(harness: Harness) -> None:
+    app = build_app(harness.state)
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        assert path is not None
+        assert classes_for(path) != (), path  # every declared route is open or gated, never unreachable
+    # Unknown prefixes answer 404 without authentication; known prefixes authenticate first.
+    r = await harness.client.get("/admin/anything")
+    assert r.status_code == 404 and r.json()["error"]["code"] == "E_NOT_FOUND"
+    r = await harness.client.get("/ledger/anything")
+    assert r.status_code == 401
+    r = await harness.client.get("/v1/nope", headers=harness.headers())
+    assert r.status_code == 404
+    r = await harness.client.post("/v1/models", headers=harness.headers())
+    assert r.status_code == 405
+
+
+async def test_rejected_outcome_is_counted(harness: Harness) -> None:
+    assert (await harness.chat(cap="abc")).status_code == 400
+    assert (await harness.chat(body={"model": "haiku", "messages": [], "max_tokens": 1})).status_code == 400
+    text = (await harness.client.get("/metrics")).text
+    assert 'gateway_requests_total{lane="metered",outcome="rejected",project="homelab-ops"} 2.0' in text
+
+
+async def test_boot_with_a_malformed_database_is_alive_but_not_ready(tmp_path: Path) -> None:
+    (tmp_path / "gateway.db").write_bytes(b"this is not a sqlite file" * 100)
+    async with harness_ctx(tmp_path) as h:
+        assert h.state.db_error is not None and h.log.events("db_open_failed")
+        assert (await h.client.get("/healthz")).status_code == 200
+        ready = await h.client.get("/readyz")
+        assert ready.status_code == 503 and "database" in ready.json()["reason"]
+        r = await h.chat()
+        assert r.status_code == 503 and h.upstream.attempts == 0
+        assert (await h.client.get("/ledger/lanes", headers=h.headers())).status_code == 503
+        assert (await h.client.get("/v1/models", headers=h.headers(project=None, cap=None))).status_code == 200
+
+
+async def test_boot_skips_the_sweep_when_quick_check_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FakeClock()
+    seed = Ledger(open_db(str(tmp_path / "gateway.db")), now_ms=clock.now_ms, log=null_log)
+    seed.reserve(make_reserve_input())
+    monkeypatch.setattr(Ledger, "quick_check", lambda self: False)
+    async with harness_ctx(tmp_path, clock=clock) as h:
+        ready = await h.client.get("/readyz")
+        assert ready.status_code == 503 and "quick_check" in ready.json()["reason"]
+        assert h.ledger.in_flight()[0] == 1  # the corrupt file was never written to
+        assert (await h.chat()).status_code == 503

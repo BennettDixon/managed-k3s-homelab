@@ -191,20 +191,34 @@ class Ledger:
         self._log = log
         self._new_id: Callable[[], str] = new_id or UlidFactory(now_ms)
         self._lock = threading.Lock()
+        # The clock guard's readiness half reads this cache, never SQLite, so
+        # /readyz and the money-path gate can run on the event loop.
+        self._commit_cache: int | None = self._last_commit_ts()
+        self._pending_commit: int | None = None
 
     # ----------------------------------------------------------------- plumbing
+
+    def _take_pending(self) -> int | None:
+        pending = self._pending_commit
+        self._pending_commit = None
+        return pending
 
     @contextmanager
     def _tx(self) -> Iterator[None]:
         self._conn.execute("BEGIN IMMEDIATE")
+        self._take_pending()
         try:
             yield
         except BaseException:
+            self._take_pending()
             with suppress(Exception):
                 self._conn.execute("ROLLBACK")
             raise
         else:
             self._conn.execute("COMMIT")
+            pending = self._take_pending()
+            if pending is not None:
+                self._commit_cache = pending
 
     def _meta_get(self, key: str) -> str | None:
         row = self._conn.execute("SELECT v FROM meta WHERE k = ?", (key,)).fetchone()
@@ -221,6 +235,7 @@ class Ledger:
         last = self._last_commit_ts()
         if last is None or now > last:
             self._meta_set("last_commit_ts", str(now))
+            self._pending_commit = now
 
     def _reserved_row(self, request_id: str) -> sqlite3.Row | None:
         row: sqlite3.Row | None = self._conn.execute(
@@ -290,31 +305,100 @@ class Ledger:
         multiplier = inp.billed_multiplier_pct if basis == "billed" else 100
         return affordable_tokens(remaining - in_cost, inp.output_price_micro_per_mtok, multiplier)
 
+    def _clock_guard_locked(self, now: int) -> tuple[str, str]:
+        """Clock guard (spec §1): a node booting on a stale RTC must not reopen a period."""
+        last = self._last_commit_ts()
+        if last is not None and now < last - CLOCK_SKEW_MS:
+            raise ClockGuardTripped(f"now {now} is behind last commit {last}")
+        period, day = period_day(now)
+        if last is not None and period < period_day(last)[0]:
+            raise ClockGuardTripped(f"period {period} sorts before the last committed period")
+        return period, day
+
+    @staticmethod
+    def _enforced(inp: ReserveInput, period: str, day: str) -> list[tuple[Scope, str, int, str]]:
+        """Enforced (scope, basis, cap, refusal name) pairs in tightest-wins order (spec §5)."""
+        enforced: list[tuple[Scope, str, int, str]] = []
+        if inp.job_id is not None:
+            job_scope = Scope("job", f"{inp.caller_id}/{inp.job_id}", "")
+            enforced.append((job_scope, "billed", inp.cap_presented_micro, "job"))
+            enforced.append((job_scope, "list", inp.cap_presented_micro, "job"))
+        if inp.caller_day_cap_micro is not None:
+            enforced.append((Scope("caller_day", inp.caller_id, day), "billed", inp.caller_day_cap_micro, "caller_day"))
+        enforced.append((Scope("project", inp.project_id, period), "billed", inp.project_cap_micro, "project_period"))
+        enforced.append((Scope("brake", inp.lane_used, day), "billed", inp.brake_cap_micro, f"brake_{inp.lane_used}"))
+        return enforced
+
+    def _latched_refusal(self, inp: ReserveInput, day: str) -> BudgetRefusal:
+        brake = self._totals_locked(Scope("brake", inp.lane_used, day))
+        remaining = max(0, inp.brake_cap_micro - brake.committed("billed"))
+        return BudgetRefusal(
+            f"brake_{inp.lane_used}",
+            "billed",
+            inp.brake_cap_micro,
+            remaining,
+            inp.reserved_micro,
+            self._affordable(inp, "billed", remaining),
+            latched=True,
+        )
+
+    def preadmit(self, inp: ReserveInput) -> None:
+        """Read-only admission on a count-independent floor (spec §5: refusals call nothing).
+
+        Raises exactly what ``reserve`` would for the same input, using reads
+        only — no row, no totals change. A brake-ceiling refusal trips the
+        latch exactly as ``reserve`` would (the floor is a lower bound, so the
+        real reservation could not have fit either). The real compare-and-add
+        still runs in ``reserve`` after the token count; this only guarantees
+        a request that cannot be admitted never reaches ``count_tokens``.
+        """
+        with self._lock:
+            try:
+                self._preadmit_locked(inp)
+            except BudgetRefusal as refusal:
+                if refusal.scope.startswith("brake_") and not refusal.latched:
+                    self._trip_brake_locked(inp.lane_used, "daily ceiling reached")
+                raise
+            except sqlite3.Error as err:
+                raise LedgerUnavailable(str(err)) from err
+
+    def _preadmit_locked(self, inp: ReserveInput) -> None:
+        now = self._now()
+        period, day = self._clock_guard_locked(now)
+        if self._brake_tripped_locked(inp.lane_used, now):
+            raise self._latched_refusal(inp, day)
+        if inp.job_id is not None:
+            pinned = self._conn.execute(
+                "SELECT cap_micro FROM job_caps WHERE caller_id = ? AND job_id = ?",
+                (inp.caller_id, inp.job_id),
+            ).fetchone()
+            if pinned is not None and int(pinned["cap_micro"]) != inp.cap_presented_micro:
+                raise JobCapMismatch(int(pinned["cap_micro"]))
+        else:
+            for basis, would in (("billed", inp.reserved_micro), ("list", inp.list_reserved_micro)):
+                if would > inp.cap_presented_micro:
+                    raise BudgetRefusal(
+                        "request",
+                        basis,
+                        inp.cap_presented_micro,
+                        inp.cap_presented_micro,
+                        would,
+                        self._affordable(inp, basis, inp.cap_presented_micro),
+                    )
+        for scope, basis, cap, name in self._enforced(inp, period, day):
+            would = inp.reserved_micro if basis == "billed" else inp.list_reserved_micro
+            totals = self._totals_locked(scope)
+            if totals.committed(basis) + would > cap:
+                remaining = max(0, cap - totals.committed(basis))
+                raise BudgetRefusal(name, basis, cap, remaining, would, self._affordable(inp, basis, remaining))
+
     def _reserve_locked(self, inp: ReserveInput) -> Reservation:
         now = self._now()
         with self._tx():
-            # Clock guard (spec §1): a node booting on a stale RTC after a power
-            # cut must not reopen a period.
-            last = self._last_commit_ts()
-            if last is not None and now < last - CLOCK_SKEW_MS:
-                raise ClockGuardTripped(f"now {now} is behind last commit {last}")
-            period, day = period_day(now)
-            if last is not None and period < period_day(last)[0]:
-                raise ClockGuardTripped(f"period {period} sorts before the last committed period")
+            period, day = self._clock_guard_locked(now)
 
-            brake_scope_name = f"brake_{inp.lane_used}"
             if self._brake_tripped_locked(inp.lane_used, now):
-                brake = self._totals_locked(Scope("brake", inp.lane_used, day))
-                remaining = max(0, inp.brake_cap_micro - brake.committed("billed"))
-                raise BudgetRefusal(
-                    brake_scope_name,
-                    "billed",
-                    inp.brake_cap_micro,
-                    remaining,
-                    inp.reserved_micro,
-                    self._affordable(inp, "billed", remaining),
-                    latched=True,
-                )
+                raise self._latched_refusal(inp, day)
 
             if inp.job_id is not None:
                 # The job-cap pin: first request fixes the cap for (caller, job).
@@ -350,27 +434,8 @@ class Ledger:
                         (scope.kind, scope.id, scope.period_key, basis),
                     )
 
-            # Enforced (scope, basis) pairs, tightest-wins order (spec §5).
-            enforced: list[tuple[Scope, str, int, str]] = []
-            if inp.job_id is not None:
-                job_scope = Scope("job", f"{inp.caller_id}/{inp.job_id}", "")
-                enforced.append((job_scope, "billed", inp.cap_presented_micro, "job"))
-                enforced.append((job_scope, "list", inp.cap_presented_micro, "job"))
-            if inp.caller_day_cap_micro is not None:
-                enforced.append(
-                    (
-                        Scope("caller_day", inp.caller_id, day),
-                        "billed",
-                        inp.caller_day_cap_micro,
-                        "caller_day",
-                    )
-                )
-            enforced.append(
-                (Scope("project", inp.project_id, period), "billed", inp.project_cap_micro, "project_period")
-            )
-            enforced.append((Scope("brake", inp.lane_used, day), "billed", inp.brake_cap_micro, brake_scope_name))
+            enforced = self._enforced(inp, period, day)
             enforced_keys = {(scope, basis) for scope, basis, _, _ in enforced}
-
             for scope, basis, cap, name in enforced:
                 would = inp.reserved_micro if basis == "billed" else inp.list_reserved_micro
                 cursor = self._conn.execute(
@@ -552,15 +617,20 @@ class Ledger:
     # ----------------------------------------------------------------- boot
 
     def sweep(self, boot_ts: int) -> SweepResult:
-        """Every ``reserved`` row older than boot is an orphan: settle it at the reservation."""
+        """Every ``reserved`` row is an orphan at boot: settle it at the reservation.
+
+        No timestamp predicate: with one process and the sweep before the
+        listener, a row reserved "after" boot can only mean the clock went
+        backwards (a stale RTC after a power cut), and that orphan must be
+        swept too — it is logged as a clock anomaly.
+        """
         by_project: dict[str, int] = defaultdict(int)
         count = 0
         with self._lock, self._tx():
             rows = self._conn.execute(
                 "SELECT id, caller_id, job_id, project_id, period, day, lane_used, state, reserved_micro, "
                 "list_reserved_micro, upstream_started, reserved_at FROM requests "
-                "WHERE state = 'reserved' AND reserved_at < ? ORDER BY reserved_at",
-                (boot_ts,),
+                "WHERE state = 'reserved' ORDER BY reserved_at, id"
             ).fetchall()
             now = self._now()
             for row in rows:
@@ -580,6 +650,7 @@ class Ledger:
                     caller_id=row["caller_id"],
                     reserved_usd=micro_to_usd_str(int(row["reserved_micro"])),
                     upstream_started=int(row["upstream_started"]),
+                    clock_anomaly=int(row["reserved_at"]) >= boot_ts,
                 )
             if rows:
                 self._touch_commit_ts(now)
@@ -645,8 +716,8 @@ class Ledger:
                 raise LedgerUnavailable(str(err)) from err
 
     def clock_ok(self, now: int) -> bool:
-        with self._lock:
-            last = self._last_commit_ts()
+        """Lock-free: reads the commit-timestamp cache, never SQLite (safe on the event loop)."""
+        last = self._commit_cache
         return last is None or now >= last - CLOCK_SKEW_MS
 
     # ----------------------------------------------------------------- reads

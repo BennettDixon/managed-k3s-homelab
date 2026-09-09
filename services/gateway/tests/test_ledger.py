@@ -275,14 +275,16 @@ def test_sweep_settles_orphans_at_the_reservation(clock: FakeClock, log: LogCapt
     assert ledger2.in_flight() == (0, None)
     assert ledger2.recompute_totals() == []
     assert ledger2.quick_check() is True
-    # A second sweep with the same boot timestamp finds nothing.
+    # A second sweep finds nothing.
     assert ledger2.sweep(clock.now_ms()).count == 0
-    # A row reserved AFTER boot is never swept by a sweep keyed on that boot.
-    boot_ts = clock.now_ms()
+    # Every reserved row is an orphan at boot, even one the (stale) clock says is
+    # newer than boot: swept, and flagged as a clock anomaly.
     d = ledger2.reserve(make_reserve_input())
-    assert ledger2.sweep(boot_ts).count == 0
+    assert ledger2.sweep(clock.now_ms() - 1_000).count == 1
     row = ledger2.request_row(d.id)
-    assert row is not None and row["state"] == "reserved"
+    assert row is not None and row["state"] == "swept"
+    assert log.events("sweep")[-1]["clock_anomaly"] is True
+    assert ledger2.recompute_totals() == []
 
 
 def test_recompute_detects_tampered_totals(ledger: Ledger) -> None:
@@ -319,3 +321,39 @@ def test_reads(ledger: Ledger, clock: FakeClock) -> None:
     assert ledger.db_bytes() > 0
     ledger.read_ping()
     ledger.write_ping()
+
+
+def test_preadmit_refuses_exactly_what_reserve_would_without_writing_a_row(ledger: Ledger, clock: FakeClock) -> None:
+    clock.set(ts(2026, 9, 9, 12))
+    before = dump(ledger)
+    with pytest.raises(BudgetRefusal) as info:
+        ledger.preadmit(make_reserve_input(cap_presented_micro=0))
+    assert info.value.scope == "request"
+    with pytest.raises(BudgetRefusal) as info:
+        ledger.preadmit(make_reserve_input(project_cap_micro=100))
+    assert info.value.scope == "project_period" and info.value.remaining_micro == 100
+    with pytest.raises(BudgetRefusal) as info:
+        ledger.preadmit(make_reserve_input(caller_day_cap_micro=1))
+    assert info.value.scope == "caller_day"
+    assert dump(ledger) == before  # reads only
+    ledger.preadmit(make_reserve_input())  # admissible: no error, still no writes
+    assert dump(ledger) == before
+
+    # The job-cap pin is honoured.
+    ledger.reserve(make_reserve_input(job_id="j", cap_presented_micro=5_000))
+    with pytest.raises(JobCapMismatch):
+        ledger.preadmit(make_reserve_input(job_id="j", cap_presented_micro=6_000))
+    ledger.preadmit(make_reserve_input(job_id="j", cap_presented_micro=5_000))
+    # A brake-ceiling refusal trips the latch exactly as reserve would, and the latch is then reported.
+    with pytest.raises(BudgetRefusal) as info:
+        ledger.preadmit(make_reserve_input(brake_cap_micro=100))
+    assert info.value.scope == "brake_metered" and info.value.latched is False
+    assert ledger.brake_state("metered").tripped is True
+    with pytest.raises(BudgetRefusal) as info:
+        ledger.preadmit(make_reserve_input())
+    assert info.value.latched is True
+    # And the clock guard applies to preadmit too.
+    ledger.reset_brake("metered", reason="test", reset_by="operator")
+    clock.advance(-120_000)
+    with pytest.raises(ClockGuardTripped):
+        ledger.preadmit(make_reserve_input())

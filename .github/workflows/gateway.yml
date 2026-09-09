@@ -36,6 +36,9 @@ jobs:
           version: "0.10.10"
           enable-cache: true
           cache-dependency-glob: services/gateway/uv.lock
+      # The lockfile is the contract: a pyproject dependency edit without a re-lock
+      # would pass --frozen and ship an image missing the package.
+      - run: uv lock --check
       - run: uv sync --frozen
       - run: uv run ruff check
       - run: uv run ruff format --check

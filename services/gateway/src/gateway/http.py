@@ -1,8 +1,10 @@
 """HTTP surface (spec §3): the OpenAI routes, the ledger reads, the probes.
 
-A deny-by-default capability table is dispatched before any handler runs;
-``/lane/*`` and ``/ledger/*`` sit outside ``/v1/*`` so the OpenAI surface
-stays exactly OpenAI.
+The deny-by-default capability table is ONE ASGI middleware keyed by path
+prefix and dispatched before any handler: a handler cannot be reached
+ungated, and a prefix the table does not know answers 404 without
+authentication. ``/lane/*`` and ``/ledger/*`` sit outside ``/v1/*`` so the
+OpenAI surface stays exactly OpenAI.
 """
 
 from __future__ import annotations
@@ -16,10 +18,13 @@ from typing import cast
 
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
-from starlette.requests import Request
+from starlette.middleware import Middleware
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gateway import __version__
 from gateway.auth import resolve_caller
@@ -43,10 +48,29 @@ from gateway.registry import Caller, Registry
 from gateway.service import GatewayService
 from gateway.upstream import MeteredClient, UpstreamFailure
 
-SPENDING = ("operator", "executor", "worker")
-LEDGER_READ = ("operator",)
-LANE_AGENT = ("lane-agent",)
+SPENDING: tuple[str, ...] = ("operator", "executor", "worker")
+LEDGER_READ: tuple[str, ...] = ("operator",)
+JOB_READ: tuple[str, ...] = ("operator", "executor")
+LANE_AGENT: tuple[str, ...] = ("lane-agent",)
+OPEN_ROUTES: frozenset[str] = frozenset({"/healthz", "/readyz", "/metrics"})
 REQUESTS_PAGE_LIMIT = 500
+# Validation-class rejections counted as outcome="rejected" (spec §9) once the project is known.
+REJECTED_STATUSES: frozenset[int] = frozenset({400, 403, 409, 413})
+
+
+def classes_for(path: str) -> tuple[str, ...] | None:
+    """The capability table (spec §2). None = open route; () = nobody (unknown prefix ⇒ 404)."""
+    if path in OPEN_ROUTES:
+        return None
+    if path.startswith("/v1/"):
+        return SPENDING
+    if path.startswith("/ledger/jobs/"):
+        return JOB_READ
+    if path.startswith("/ledger/"):
+        return LEDGER_READ
+    if path.startswith("/lane/"):
+        return LANE_AGENT
+    return ()
 
 
 @dataclass
@@ -62,9 +86,14 @@ class AppState:
     log: Log
     now_ms: Callable[[], int]
     boot_errors: list[str] = field(default_factory=list)
+    db_error: str | None = None
 
     def ready_reason(self) -> str | None:
-        """Why /readyz would say no (None = ready). Money paths are blocked while set."""
+        """Why /readyz would say no (None = ready). Money paths are blocked while set.
+
+        Cheap and synchronous by construction: ``clock_ok`` reads a cached
+        timestamp, never SQLite, so this can run on the event loop.
+        """
         if self.registry_error is not None:
             return f"registry parse failed: {self.registry_error}"
         if not self.config.caller_tokens:
@@ -85,16 +114,48 @@ def error_response(err: GatewayError) -> JSONResponse:
 def money_row(row: Mapping[str, object]) -> dict[str, object]:
     """A ledger row for /ledger/*: the metadata columns, micro-USD rendered as USD alongside."""
     out = dict(row)
-    for column in (
-        "cap_presented_micro",
-        "reserved_micro",
-        "settled_micro",
-        "list_reserved_micro",
-        "list_micro",
-    ):
+    for column in ("cap_presented_micro", "reserved_micro", "settled_micro", "list_reserved_micro", "list_micro"):
         value = out.get(column)
         out[column.replace("_micro", "_usd")] = None if value is None else micro_to_usd_float(int(cast(int, value)))
     return out
+
+
+def caller_of(request: Request) -> Caller:
+    return cast(Caller, request.state.caller)
+
+
+class ClassGate:
+    """Authenticate and class-gate every request by path prefix, before routing."""
+
+    def __init__(self, app: ASGIApp, state: AppState) -> None:
+        self.app = app
+        self.state = state
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = str(scope["path"])
+        classes = classes_for(path)
+        if classes is None:
+            await self.app(scope, receive, send)
+            return
+        try:
+            if not classes:
+                raise not_found("no such route")
+            if self.state.registry_error is not None:
+                raise ledger_unavailable("not ready: registry parse failed")
+            headers = Headers(scope=scope)
+            caller = resolve_caller(headers.get("authorization"), self.state.config.caller_tokens, self.state.registry)
+            if caller is None:
+                raise unauthorized()
+            if caller.class_ not in classes:
+                raise forbidden(f"class {caller.class_} may not call {path}")
+        except GatewayError as err:
+            await error_response(err)(scope, receive, send)
+            return
+        scope.setdefault("state", {})["caller"] = caller
+        await self.app(scope, receive, send)
 
 
 def build_app(state: AppState) -> Starlette:
@@ -123,15 +184,14 @@ def build_app(state: AppState) -> Starlette:
         except ValueError as err:
             raise schema("request body is not valid JSON") from err
 
-    def authenticate(request: Request, classes: tuple[str, ...]) -> Caller:
-        if state.registry_error is not None:
-            raise ledger_unavailable("not ready: registry parse failed")
-        caller = resolve_caller(request.headers.get("authorization"), state.config.caller_tokens, state.registry)
-        if caller is None:
-            raise unauthorized()
-        if caller.class_ not in classes:
-            raise forbidden(f"class {caller.class_} may not call {request.url.path}")
-        return caller
+    def require_ledger() -> None:
+        if state.db_error is not None:
+            raise ledger_unavailable(f"not ready: {state.db_error}")
+
+    def require_ready() -> None:
+        reason = state.ready_reason()
+        if reason is not None:
+            raise ledger_unavailable(f"not ready: {reason}")
 
     # ------------------------------------------------------------- probes
 
@@ -164,29 +224,53 @@ def build_app(state: AppState) -> Starlette:
 
     # ------------------------------------------------------------- /v1
 
+    def count_rejected(request: Request, err: GatewayError) -> None:
+        if err.status not in REJECTED_STATUSES:
+            return
+        project = request.headers.get("x-gateway-project") or request.headers.get("openai-project") or ""
+        if project in state.registry.projects:
+            state.metrics.requests_total.labels("metered", project, "rejected").inc()
+
+    def retrieve(task: asyncio.Task[object]) -> None:
+        # A detached money task whose client left: retrieve the exception so it is logged, not warned about.
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None and not isinstance(exc, GatewayError):
+            log("stream_task_failed", error=repr(exc))
+
     async def chat_completions(request: Request) -> Response:
-        caller = authenticate(request, SPENDING)
-        reason = state.ready_reason()
-        if reason is not None:
-            raise ledger_unavailable(f"not ready: {reason}")
+        caller = caller_of(request)
+        require_ready()
         body = await read_json(request)
-        prepared = await state.service.prepare(caller, request.headers, body)
+        try:
+            prepared = await state.service.prepare(caller, request.headers, body)
+        except GatewayError as err:
+            count_rejected(request, err)
+            raise
         if not prepared.stream:
             done = await state.service.execute(prepared)
             return JSONResponse(done.body, headers=done.headers)
 
         # Buffered stream (spec §3): headers go out first so no client dies at
         # 300 s waiting; the money fields ride the final chunk's gateway object.
+        # The money path runs as its own task: a client disconnect cancels this
+        # response's generator, never the provider call or the settle — the
+        # row ends settled from real usage (≤ the reservation) either way.
+        task = asyncio.create_task(state.service.execute(prepared))
+        task.add_done_callback(retrieve)
+
         async def events() -> AsyncIterator[str]:
             try:
-                done = await state.service.execute(prepared)
-                for payload in done.sse:
-                    yield f"data: {payload}\n\n"
+                done = await asyncio.shield(task)
             except GatewayError as err:
                 yield f"data: {json.dumps(err.envelope(), separators=(',', ':'))}\n\n"
             except Exception as err:
                 log("stream_unhandled", request_id=prepared.reservation.id, error=repr(err))
                 yield f"data: {json.dumps(internal().envelope(), separators=(',', ':'))}\n\n"
+            else:
+                for payload in done.sse:
+                    yield f"data: {payload}\n\n"
             yield "data: [DONE]\n\n"
 
         headers = {
@@ -202,7 +286,7 @@ def build_app(state: AppState) -> Starlette:
         return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
 
     async def models(request: Request) -> Response:
-        caller = authenticate(request, SPENDING)
+        caller = caller_of(request)
         registry = state.registry
         header = request.headers.get("x-gateway-project") or request.headers.get("openai-project")
         if header is not None:
@@ -232,14 +316,14 @@ def build_app(state: AppState) -> Starlette:
                 cast(list[str], entry["projects"]).append(project_id)
         return JSONResponse({"object": "list", "data": list(seen.values())})
 
-    async def embeddings(request: Request) -> Response:
-        authenticate(request, SPENDING)
+    async def embeddings(_: Request) -> Response:
         raise unsupported("/v1/embeddings is declared but not offered in v1 (spec §11)", status=501)
 
     # ------------------------------------------------------------- /ledger
 
     async def ledger_project(request: Request) -> Response:
-        caller = authenticate(request, LEDGER_READ)
+        caller = caller_of(request)
+        require_ledger()
         project_id = request.path_params["project_id"]
         project = state.registry.projects.get(project_id)
         if project is None or project_id not in caller.projects:
@@ -265,17 +349,26 @@ def build_app(state: AppState) -> Starlette:
         )
 
     async def ledger_job(request: Request) -> Response:
-        caller = authenticate(request, ("operator", "executor"))
+        caller = caller_of(request)
+        require_ledger()
         job_id = request.path_params["job_id"]
-        # Scope key is (caller_id, job_id): an executor reads only its own jobs.
-        cap = await asyncio.to_thread(state.ledger.job_cap, caller.id, job_id)
+        # Scope key is (caller_id, job_id): an executor reads only its own jobs;
+        # an operator may name another caller whose projects it is granted.
+        target = caller.id
+        requested = request.query_params.get("caller")
+        if requested is not None and requested != caller.id:
+            other = state.registry.callers.get(requested)
+            if caller.class_ != "operator" or other is None or not set(other.projects) <= set(caller.projects):
+                raise forbidden("caller not visible to this reader")
+            target = requested
+        cap = await asyncio.to_thread(state.ledger.job_cap, target, job_id)
         if cap is None:
             raise not_found("no ledger rows for this job")
-        totals = await asyncio.to_thread(state.ledger.job_totals, caller.id, job_id)
-        count = await asyncio.to_thread(state.ledger.job_request_count, caller.id, job_id)
+        totals = await asyncio.to_thread(state.ledger.job_totals, target, job_id)
+        count = await asyncio.to_thread(state.ledger.job_request_count, target, job_id)
         return JSONResponse(
             {
-                "caller_id": caller.id,
+                "caller_id": target,
                 "job_id": job_id,
                 "cap_usd": micro_to_usd_float(cap),
                 "spent_usd": micro_to_usd_float(totals.settled_list),
@@ -288,7 +381,8 @@ def build_app(state: AppState) -> Starlette:
         )
 
     async def ledger_requests(request: Request) -> Response:
-        caller = authenticate(request, LEDGER_READ)
+        caller = caller_of(request)
+        require_ledger()
         project_id = request.query_params.get("project")
         if not project_id:
             raise schema("query parameter project is required", param="project")
@@ -302,8 +396,8 @@ def build_app(state: AppState) -> Starlette:
         rows = await asyncio.to_thread(state.ledger.requests_for_project, project_id, since, REQUESTS_PAGE_LIMIT)
         return JSONResponse({"project": project_id, "since": since, "requests": [money_row(r) for r in rows]})
 
-    async def ledger_lanes(request: Request) -> Response:
-        authenticate(request, LEDGER_READ)
+    async def ledger_lanes(_: Request) -> Response:
+        require_ledger()
         status = state.lane.status()
         brake = await asyncio.to_thread(state.ledger.brake_state, "metered")
         return JSONResponse(
@@ -334,7 +428,8 @@ def build_app(state: AppState) -> Starlette:
         )
 
     async def brake_reset(request: Request) -> Response:
-        caller = authenticate(request, LEDGER_READ)
+        caller = caller_of(request)
+        require_ready()  # a money-adjacent write: same gate as a reservation
         body = await read_json(request)
         if not isinstance(body, dict):
             raise schema("body must be an object")
@@ -346,18 +441,12 @@ def build_app(state: AppState) -> Starlette:
             raise schema("reason is required", param="reason")
         brake = await asyncio.to_thread(state.ledger.reset_brake, str(lane), reason=reason.strip(), reset_by=caller.id)
         return JSONResponse(
-            {
-                "lane": brake.lane,
-                "tripped": brake.tripped,
-                "reset_at": brake.reset_at,
-                "reset_by": brake.reset_by,
-            }
+            {"lane": brake.lane, "tripped": brake.tripped, "reset_at": brake.reset_at, "reset_by": brake.reset_by}
         )
 
     # ------------------------------------------------------------- /lane (deferred)
 
-    async def lane_stub(request: Request) -> Response:
-        authenticate(request, LANE_AGENT)
+    async def lane_stub(_: Request) -> Response:
         raise unsupported("the subscription lane is deferred in v1 (spec §6.2)", status=501)
 
     # ------------------------------------------------------------- errors
@@ -374,6 +463,10 @@ def build_app(state: AppState) -> Starlette:
                 GatewayError("E_SCHEMA", 405, "method not allowed", headers=dict(http_exc.headers or {}))
             )
         return error_response(GatewayError("E_SCHEMA", http_exc.status_code, str(http_exc.detail)))
+
+    async def on_client_disconnect(_: Request, __: Exception) -> Response:
+        # An aborted upload: nobody is listening for the answer; keep it out of the unhandled log.
+        return Response(status_code=499)
 
     async def on_unhandled(request: Request, exc: Exception) -> Response:
         log("unhandled", path=request.url.path, error=repr(exc))
@@ -407,9 +500,11 @@ def build_app(state: AppState) -> Starlette:
     ]
     return Starlette(
         routes=routes,
+        middleware=[Middleware(ClassGate, state=state)],
         exception_handlers={
             GatewayError: on_gateway_error,
             HTTPException: on_http_exception,
+            ClientDisconnect: on_client_disconnect,
             Exception: on_unhandled,
         },
         lifespan=asynccontextmanager(lifespan),

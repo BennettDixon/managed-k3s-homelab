@@ -58,6 +58,8 @@ def test_load_config_defaults(tmp_path: Path) -> None:
         ("PROVIDER_TIMEOUT_MS", "999999", "integer"),
         ("BILLED_PRICE_MULTIPLIER_PCT", "99", "integer"),
         ("LANE_PROBE_INTERVAL_MS", "-1", "integer"),
+        ("DB_PATH", "", "set but empty"),
+        ("REGISTRY_PATH", "", "set but empty"),
     ],
 )
 def test_load_config_is_loud(tmp_path: Path, name: str, value: str, pattern: str) -> None:

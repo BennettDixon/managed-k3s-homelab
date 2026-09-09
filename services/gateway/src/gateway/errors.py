@@ -85,9 +85,22 @@ def not_found(message: str) -> GatewayError:
 
 
 def internal() -> GatewayError:
-    # Details are logged, never leaked (spec §3).
-    return GatewayError("E_INTERNAL", 500, "internal error", retryable=True)
+    # Details are logged, never leaked (spec §3). Never retryable: an unhandled
+    # failure may sit after a billed generation, and a retry would be a second spend.
+    return GatewayError("E_INTERNAL", 500, "internal error", retryable=False)
 
 
 def ledger_unavailable(message: str) -> GatewayError:
+    """Before any provider call: nothing happened, a retry is safe."""
     return GatewayError("E_LEDGER_UNAVAILABLE", 503, message, retryable=True, headers={"retry-after": "5"})
+
+
+def ledger_unavailable_after_call() -> GatewayError:
+    """After a billed generation: the row is swept at the next boot; a retry would be a second spend."""
+    return GatewayError(
+        "E_LEDGER_UNAVAILABLE",
+        503,
+        "ledger write failed after the provider call; the generation was billed and is reconciled at the next "
+        "boot sweep - do not retry blindly",
+        retryable=False,
+    )

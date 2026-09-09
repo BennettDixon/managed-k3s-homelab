@@ -134,8 +134,8 @@ def load_config(env: Mapping[str, str]) -> Config:
     max_request_cap = _usd_env(env, "MAX_REQUEST_CAP_USD", 25_000_000, 10_000, 10_000_000_000)
     return Config(
         port=_int_env(env, "PORT", 8080, 1, 65535),
-        db_path=env.get("DB_PATH") or "/data/gateway.db",
-        registry_path=env.get("REGISTRY_PATH") or "/config/registry.yaml",
+        db_path=_raw(env, "DB_PATH") or "/data/gateway.db",
+        registry_path=_raw(env, "REGISTRY_PATH") or "/config/registry.yaml",
         caller_tokens=parse_caller_tokens(tokens_raw),
         anthropic_api_key=api_key,
         max_request_cap_micro=max_request_cap,
