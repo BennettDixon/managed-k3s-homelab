@@ -104,7 +104,7 @@ export function buildMcpServer(
   metrics: Metrics,
   log: (line: Record<string, unknown>) => void = () => {},
 ): Server {
-  const server = new Server({ name: "jobs-mcp", version: "0.1.0" }, { capabilities: { tools: {} } });
+  const server = new Server({ name: "jobs-mcp", version: "0.2.0" }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 

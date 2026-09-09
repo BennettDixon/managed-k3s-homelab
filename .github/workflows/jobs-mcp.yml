@@ -38,3 +38,37 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  # Merged != landed (PR #16, 2026-09-03): the probe merged as code only while
+  # package.json and the manifest tag stayed 0.1.0, so nothing rebuilt or
+  # rolled the pod and JobsBridgeDown's text described a probe that was not
+  # running. CI never builds images here — the tag bump IS the deploy — so a
+  # PR that changes what goes into the image must move the version, the tag
+  # and the advertised MCP server version together.
+  version-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: image-affecting change requires a version + tag bump
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if git diff --quiet "$base" HEAD -- services/jobs-mcp/src services/jobs-mcp/Dockerfile services/jobs-mcp/package-lock.json services/jobs-mcp/tsconfig.json; then
+            echo "no image-affecting change; nothing to enforce"; exit 0
+          fi
+          old=$(git show "$base:services/jobs-mcp/package.json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+          new=$(node -p "require('./services/jobs-mcp/package.json').version")
+          if [ "$old" = "$new" ]; then
+            echo "::error::services/jobs-mcp image inputs changed but package.json version is still $old — bump it and the tag in apps/base/jobs-mcp/deployment.yaml"; exit 1
+          fi
+          tag=$(grep -oE 'jobs/jobs-mcp:[0-9A-Za-z.-]+' apps/base/jobs-mcp/deployment.yaml | cut -d: -f2)
+          if [ "$tag" != "$new" ]; then
+            echo "::error::apps/base/jobs-mcp/deployment.yaml pins tag '$tag' but package.json is $new — they move together"; exit 1
+          fi
+          lit=$(grep -oE 'version: "[0-9A-Za-z.-]+"' services/jobs-mcp/src/mcp.ts | head -1 | cut -d'"' -f2)
+          if [ "$lit" != "$new" ]; then
+            echo "::error::src/mcp.ts advertises MCP server version '$lit' but package.json is $new"; exit 1
+          fi
+          echo "version $old -> $new; manifest tag and MCP server version agree"

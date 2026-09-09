@@ -20,13 +20,21 @@ spec:
       imagePullSecrets:
         - name: jobs-mcp-registry-harbor-docker-login
       terminationGracePeriodSeconds: 30
+      # Hardening parity with knowledge-mcp (same runtime stack, 2026-09-09).
+      # jobs-mcp never touches the Kubernetes API, yet it held a projected SA
+      # token and a writable root filesystem while carrying the bearer, the
+      # webhook secret and the n8n API key — the highest-blast-radius pod on
+      # the node. Writes go to /data (SQLite + WAL) and a /tmp emptyDir only.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: jobs-mcp
-          image: harbor.internal/jobs/jobs-mcp:0.1.0
+          image: harbor.internal/jobs/jobs-mcp:0.2.0
           ports:
             - containerPort: 8080
               name: http
@@ -84,12 +92,19 @@ spec:
             limits:
               cpu: 250m
               memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data
             - name: registry
               mountPath: /config
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -97,3 +112,7 @@ spec:
         - name: registry
           configMap:
             name: jobs-mcp-registry
+        # SQLite temp files (read-only rootfs otherwise); same cap as knowledge-mcp.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
