@@ -361,20 +361,25 @@ and the one remaining gate step are the operator's:
 
 ## Next session starts with
 
-- **Next build-order item: the model gateway spec** (item 4) — unchanged and
-  now unblocked; no gateway artifact exists anywhere yet. Nine sign-offs go
-  to the operator in one sitting: language (Python vs TS-for-parity,
-  two-toolchain cost stated); placement (k3s pod, the subscription lane
-  later as a worker-side pull agent); lane routing and whether fallback may
-  convert $0 subscription calls into metered spend; ledger store (house
-  SQLite); per-project budget model; OpenAI-compatible surface size; caller
-  auth (the caller-token map — the gateway is its second consumer);
-  request-log content (metadata only); the subscription lane's terms and
-  quota. Design-first with the panel + critics treatment jobs-mcp and
-  knowledge-mcp got.
-- **Merge PR #19** in its own window (it recreates the jobs-mcp pod through
-  the `apps` chain), then verify per its description — never in the same
-  window as another reconciliation-chain change.
+- **Gateway spec APPROVED 2026-09-09 (PR #21, `docs/specs/gateway.md`)** —
+  panel of four opposed drafts, a bench critic, a design critic and a money
+  red-team, then synthesis; nine sign-offs recorded: Python (the house
+  language for every new service from here on; jobs-mcp and knowledge-mcp
+  stay TS); k3s pod; lane header optional with a project default and no
+  silent fallback; house SQLite with integer micro-USD; list-equivalent USD
+  as the cap unit on every lane (`0` forbids every call) and as jobs-mcp's
+  `spent_usd`; chat completions + models only; the caller-token map with a
+  closed class set; a metadata-only ledger-row log; **the subscription lane
+  is deferred** (operator: hold off on using the subscription for automated
+  jobs) — v1 is metered-only and the pull-agent design stays in the spec as
+  the seam. **Next: slice 1** — `services/gateway/` in Python (OpenAI subset,
+  registry + admission, the ledger with its property tests, metered client,
+  probes, metrics, CI with the version-bump guard): agent-only, no
+  manifests, nothing spends. Start it in a fresh session with the spec as
+  the single input, then the adversarial review the house budgets.
+- ~~Merge PR #19~~ merged and verified live 2026-09-09: pod on 0.2.0, the
+  hardening block applied, the probe in the running bundle — #16's loop is
+  closed on the cluster, not only in git.
 - **Operator step pending:** deactivate the legacy ESO key (runbook step 5)
   after a cool-down; then delete it and the local `aws-creds` backup.
 - **Agent-only PRs queued:** Grafana admin credential onto the secret path;
@@ -449,3 +454,15 @@ and the one remaining gate step are the operator's:
   GitHub. A jobs-mcp PR that changes image inputs must move the package
   version, the manifest tag and the advertised MCP server version together
   (CI guard in #19); knowledge-mcp gets the same guard at its next bump.
+- 2026-09-09: Python is the house language for every NEW service, starting
+  with the gateway; jobs-mcp and knowledge-mcp stay TypeScript (a rewrite,
+  if ever, is all-at-once, never piecemeal). The two-toolchain cost is
+  recorded in `docs/specs/gateway.md` §12.
+- 2026-09-09: the gateway's budget cap is a bound on LIST-equivalent cost on
+  every lane (`0` = no model call anywhere), and jobs-mcp's `spent_usd`
+  reports list-equivalent USD — the same unit as `budget_cap`.
+- 2026-09-09: the subscription lane (headless Claude on `worker-01` under
+  the operator's plan) is DEFERRED — the operator holds off on using the
+  subscription for automated jobs. Gateway v1 is metered-only; the
+  pull-agent design stays in the spec as the seam; reopening is an explicit
+  operator decision, not a tripwire.
