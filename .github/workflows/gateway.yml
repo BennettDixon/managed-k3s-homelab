@@ -1,0 +1,89 @@
+# gateway: the first Python service of the house (spec §12). ruff + mypy
+# --strict + pytest with the spec §14 property tests, then the local smoke
+# against a stub upstream. CI holds no key and reaches no provider: the suite
+# and the smoke run against a fake and spend nothing. The registry guard
+# (tests/test_registry_manifest.py) parses apps/base/gateway/registry.yaml
+# under the service's own admission rules once slice 2 lands it — a malformed
+# registry would fail readiness and freeze the Flux apps Kustomization.
+name: gateway
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/gateway/**"
+      - "apps/base/gateway/registry.yaml"
+      - ".github/workflows/gateway.yml"
+  pull_request:
+    paths:
+      - "services/gateway/**"
+      - "apps/base/gateway/registry.yaml"
+      - ".github/workflows/gateway.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: services/gateway/.python-version
+      - uses: astral-sh/setup-uv@v10
+        with:
+          # Same uv the Dockerfile pins; the lockfile is the contract.
+          version: "0.10.10"
+          enable-cache: true
+          cache-dependency-glob: services/gateway/uv.lock
+      - run: uv sync --frozen
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy
+      - run: uv run pytest -q
+      # Spec §14 slice-1 verify line: boots against a stub upstream, one
+      # completion at cap $0.01, the ledger row, a 402 for cap 0.
+      - run: uv run gateway-smoke-local
+
+  # Merged != landed (jobs-mcp PR #16, 2026-09-03): a probe merged as code only
+  # while the version and the manifest tag stayed put, so nothing rebuilt or
+  # rolled the pod. CI never builds images here — the tag bump IS the deploy —
+  # so a PR that changes what goes into the image must move pyproject.toml's
+  # version, src/gateway/__init__.py and (from slice 2) the manifest tag
+  # together. "Merged != landed" applies doubly to a service that spends.
+  version-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: image-affecting change requires a version + tag bump
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if git diff --quiet "$base" HEAD -- services/gateway/src services/gateway/Dockerfile services/gateway/uv.lock; then
+            echo "no image-affecting change; nothing to enforce"; exit 0
+          fi
+          new=$(python3 -c 'import tomllib; print(tomllib.load(open("services/gateway/pyproject.toml", "rb"))["project"]["version"])')
+          if git cat-file -e "$base:services/gateway/pyproject.toml" 2>/dev/null; then
+            old=$(git show "$base:services/gateway/pyproject.toml" | python3 -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["project"]["version"])')
+          else
+            old="(new service)"
+          fi
+          if [ "$old" = "$new" ]; then
+            echo "::error::services/gateway image inputs changed but pyproject.toml version is still $old — bump it, src/gateway/__init__.py and the tag in apps/base/gateway/deployment.yaml"; exit 1
+          fi
+          lit=$(grep -oE '__version__ = "[0-9A-Za-z.-]+"' services/gateway/src/gateway/__init__.py | cut -d'"' -f2)
+          if [ "$lit" != "$new" ]; then
+            echo "::error::src/gateway/__init__.py advertises version '$lit' but pyproject.toml is $new"; exit 1
+          fi
+          manifest=apps/base/gateway/deployment.yaml
+          if [ -f "$manifest" ]; then
+            tag=$(grep -oE 'gateway/gateway:[0-9A-Za-z.-]+' "$manifest" | cut -d: -f2)
+            if [ "$tag" != "$new" ]; then
+              echo "::error::$manifest pins tag '$tag' but pyproject.toml is $new — they move together"; exit 1
+            fi
+            echo "version $old -> $new; manifest tag and __version__ agree"
+          else
+            echo "version $old -> $new; __version__ agrees (no manifest yet — slice 2 lands the tag this guard will check)"
+          fi
