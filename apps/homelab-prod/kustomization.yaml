@@ -12,6 +12,9 @@ resources:
   # Prod-only on purpose (spec §8): in-base ExternalSecrets — never in
   # apps/development.
   - ../base/knowledge-mcp
+  # Prod-only on purpose (gateway spec §8): in-base ExternalSecrets carrying
+  # the first dollar-spending credential — never in apps/development.
+  - ../base/gateway
 patches:
   - path: harbor-values.yaml
     target:

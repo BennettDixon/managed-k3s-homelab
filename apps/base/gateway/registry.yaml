@@ -1,0 +1,35 @@
+# Model, project and caller registry (spec §4). Repo-owned; shipped via
+# configMapGenerator so any change hash-rolls the Recreate Deployment. Parse
+# failure fails READINESS (not the process) — which stalls the Flux `apps`
+# Kustomization (wait: true), so CI parses THIS file under the service's own
+# admission rules, against the deployment's MAX_REQUEST_CAP_USD
+# (services/gateway/tests/test_registry_manifest.py). Raising a budget is a
+# PR a human reads. Public-repo safe by construction: MagicDNS names only.
+prices_as_of: 2026-09-09          # operator attestation; feeds gateway_price_table_age_seconds
+# Attested Console workspace `homelab-gateway` monthly spend limit AFTER the
+# deliberate $1 trip of slice 2 (spec §7.3: above Σ caps, ~2x). CI enforces
+# Σ projects.cap_usd <= this (never a readiness check, so a cap-raising PR
+# can never freeze the chain).
+console_workspace_limit_usd: 50
+models:                           # USD per MTok; the registry copy is authoritative once merged
+  claude-opus-5:    {input: 5.00, output: 25.00, cache_write_5m: 6.25, cache_write_1h: 10.00, cache_read: 0.50, max_tokens: 16000, default_max_tokens: 4096, effort: true,  lanes: [subscription, metered], cli_alias: opus}
+  claude-sonnet-5:  {input: 2.00, output: 10.00, cache_write_5m: 2.50, cache_write_1h: 4.00,  cache_read: 0.20, max_tokens: 16000, default_max_tokens: 4096, effort: true,  lanes: [subscription, metered], cli_alias: sonnet}
+  claude-haiku-4-5: {input: 1.00, output: 5.00,  cache_write_5m: 1.25, cache_write_1h: 2.00,  cache_read: 0.10, max_tokens: 8000,  default_max_tokens: 1024, effort: false, lanes: [metered]}
+aliases: {opus: claude-opus-5, sonnet: claude-sonnet-5, haiku: claude-haiku-4-5}
+# subscription: {harness_overhead_tokens, concurrency, max_per_hour, window_5h_list_usd, window_7d_list_usd}
+#   — the deferred lane's quota block (spec §6.2); ships with that lane, not in v1
+projects:
+  # Σ cap_usd = 21.00 <= console_workspace_limit_usd (50). v1 is metered-only:
+  # every project lists [metered] and no fallback (spec §6.3, SIGN-OFF 9).
+  homelab-ops:   {cap_usd: 20.00, period: month, lanes: [metered], default_lane: metered, fallback_allowed: false, max_request_cap_usd: 5.00, default_model: claude-sonnet-5, models: [claude-sonnet-5, claude-opus-5, claude-haiku-4-5]}
+  gateway-smoke: {cap_usd: 1.00,  period: month, lanes: [metered], default_lane: metered, fallback_allowed: false, max_request_cap_usd: 0.10, default_model: claude-haiku-4-5, models: [claude-haiku-4-5]}
+callers:                          # policy only; tokens live in the SM map (both sides must agree, fail closed)
+  # The blast-radius numbers the operator signed (spec §5, §15 tail): the
+  # operator's own workbench token is bounded at $5.00 per request and $5.00
+  # billed per UTC day (`caller_day` scope); the n8n executor identifies
+  # n8n-as-executor (every workflow author reads $env) and can spend $0.10
+  # per request inside gateway-smoke's $1/month. The `agent` workbench
+  # account gets its own caller id when it first needs one — never this token.
+  operator:      {class: operator,   projects: [homelab-ops, gateway-smoke], lanes: [metered], max_request_cap_usd: 5.00, max_day_billed_usd: 5.00}
+  n8n-executor:  {class: executor,   projects: [gateway-smoke],              lanes: [metered], max_request_cap_usd: 0.10}
+  # worker-01:   {class: lane-agent, lane: subscription}   # minted with the deferred lane, not in v1

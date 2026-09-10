@@ -1,0 +1,25 @@
+# The metered lane's Anthropic API key (spec §6.1, §7): minted in the
+# dedicated Console workspace `homelab-gateway` whose monthly spend limit is
+# the outer bound of a leak (spec §7.3), read by ESO under the scoped
+# read-only reader (its ARN is in terraform/iam-external-secrets.tf), and
+# consumed by the gateway pod ONLY as env ANTHROPIC_API_KEY. Who can read it,
+# exhaustively: spec §7.2. Never a worker, never n8n. Rotation: spec §7.4 /
+# docs/runbooks/gateway.md.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: gateway-anthropic-api-key
+  namespace: gateway
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: gateway-anthropic-api-key
+    creationPolicy: Owner
+  data:
+    - secretKey: api_key
+      remoteRef:
+        key: k3s_gateway_anthropic_api_key
+        property: api_key

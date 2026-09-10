@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: gateway
+spec:
+  # replicas 1 + Recreate + the RWO PVC make a second SQLite writer — a
+  # second money ledger — structurally impossible across upgrades and
+  # rollbacks (spec §1, §8).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      imagePullSecrets:
+        - name: gateway-registry-harbor-docker-login
+      # uvicorn's graceful shutdown is 25 s (timeout_graceful_shutdown in
+      # services/gateway/src/gateway/main.py): an in-flight provider call gets
+      # cancelled and settles AT its reservation before SIGKILL, so a
+      # Recreate deploy mid-call over-counts by at most one worst case and
+      # never under-counts. Must stay above 25 s.
+      terminationGracePeriodSeconds: 30
+      # Hardening block cloned from knowledge-mcp (spec §8). This pod holds a
+      # dollar-spending credential in its environment and nothing else: no
+      # projected SA token (a request-path bug cannot list Secrets), a
+      # read-only root filesystem (writes go to /data and a /tmp emptyDir for
+      # SQLite temp files only), no capabilities, the runtime seccomp
+      # profile. The in-code hard-coded provider base URL is the egress
+      # fence; the cluster has no egress NetworkPolicy precedent (spec §11).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          # Built and pushed from the workbench; the tag moves together with
+          # services/gateway/pyproject.toml's version and __init__.__version__
+          # (the version-bump CI guard in .github/workflows/gateway.yml).
+          image: harbor.internal/gateway/gateway:0.1.0
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PORT
+              value: "8080"
+            # Image-internal paths, pinned here on purpose (unlike jobs-mcp
+            # and knowledge-mcp): services/gateway/tests/test_registry_manifest.py
+            # asserts they sit under the volumeMounts below, so this is a
+            # CI-checked single source of truth rather than a second one.
+            - name: DB_PATH
+              value: /data/gateway.db
+            - name: REGISTRY_PATH
+              value: /config/registry.yaml
+            # Ceiling on any X-Gateway-Budget-Cap-USD (spec §3); the deployed
+            # registry is parsed against THIS value in CI, so no caller's
+            # max_request_cap_usd can exceed it.
+            - name: MAX_REQUEST_CAP_USD
+              value: "25"
+            # The two gateway-wide daily brakes (spec §5). Trip => 402
+            # scope=brake_* until 00:00 UTC or an audited brake-reset. Never
+            # raise these to make a page stop: find the offender in
+            # /ledger/requests, cancel it at jobs-mcp, then reset. The
+            # subscription brake is inert until the deferred lane ships.
+            - name: GATEWAY_METERED_DAILY_CEILING_USD
+              value: "5"
+            - name: GATEWAY_SUBSCRIPTION_DAILY_LIST_CEILING_USD
+              value: "10"
+            # Read timeout per provider call (spec §2, §6.1); the connect
+            # budget is 10 s in code. Below the 600 s server timeout.
+            - name: PROVIDER_TIMEOUT_MS
+              value: "300000"
+            # Idle probe: models.list() every 5 min while up (60 s while down,
+            # code default) — authenticated, unbilled, so a revoked key is
+            # seen without spending (the idle-bridge-probe lesson).
+            - name: LANE_PROBE_INTERVAL_MS
+              value: "300000"
+            # BILLED_PRICE_MULTIPLIER_PCT is deliberately NOT set (code default
+            # 100): it becomes 110 only if the first live call reports
+            # usage.inference_geo pinned to US inference (spec §5 verify).
+            # The WHOLE caller-token JSON map {caller_id: token} (spec §2).
+            # Policy (caller -> class -> projects/lanes/ceilings) is
+            # registry.yaml's job, never the secret's; a token whose id has no
+            # registry entry authenticates nobody.
+            - name: GATEWAY_CALLER_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-caller-tokens
+                  key: tokens
+            # The metered lane's key (spec §6.1, §7): passed explicitly to the
+            # SDK, never resolved ambiently — the process refuses to boot if
+            # ANTHROPIC_BASE_URL / _AUTH_TOKEN / _PROFILE / _CUSTOM_HEADERS
+            # are present in its environment.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-anthropic-api-key
+                  key: api_key
+          # Boot runs quick_check + the orphan sweep + the totals recompute
+          # BEFORE listening (spec §1); on a 1 Gi ledger that is seconds, but
+          # the startup probe gives it up to 2 min (24 x 5 s) before liveness
+          # may restart the pod. Liveness/readiness take over once /healthz
+          # answers.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          # Liveness = process + DB open, NEVER writes. Readiness = a WRITE
+          # ping (spec §8: a write-accepting service — a full disk must take
+          # the gateway down, never let it spend unrecorded) + registry
+          # parsed + token map loaded + key present + clock guard. Lane
+          # health is in neither: a dead key must not take /ledger/* down.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          # Measured 73 MiB RSS at boot on the 0.1.0 image (2026-09-10).
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: registry
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: gateway-data
+        - name: registry
+          configMap:
+            name: gateway-registry
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

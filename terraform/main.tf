@@ -218,3 +218,43 @@ module "knowledge_harbor_docker_pull_secret" {
     registry = var.harbor_registry_domain
   })
 }
+
+# gateway secrets (spec: docs/specs/gateway.md §7; consumed by the
+# ExternalSecrets in apps/base/gateway/). Onboarding, rotation and every
+# out-of-band holder: docs/runbooks/gateway.md. All three ARNs are in the ESO
+# reader policy (iam-external-secrets.tf) — the 2026-09-09 rule: same PR, or
+# ESO gets AccessDenied for the new entry.
+module "gateway_caller_tokens_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_gateway_caller_tokens"
+  description = "gateway caller-token JSON map (caller_id -> token); policy lives in the repo registry apps/base/gateway/registry.yaml. Out-of-band holders: the operator value in the workbench env (GATEWAY_TOKEN / OPENAI_API_KEY of OpenAI-speaking tools); the n8n-executor value in the n8n LXC env as GATEWAY_EXECUTOR_TOKEN (slice 3). The lane-agent token is minted with the deferred subscription lane, not here"
+  # The WHOLE secret value is the map: the ExternalSecret reads it with no
+  # `property`, so the pod receives {"operator": ..., "n8n-executor": ...}
+  # verbatim as GATEWAY_CALLER_TOKENS (house auth shape, knowledge-mcp
+  # precedent). Adding a caller = one more entry here + a `callers:` line in
+  # registry.yaml — the PR is where a human reads what they grant.
+  secret_value = jsonencode({
+    operator       = var.gateway_operator_token
+    "n8n-executor" = var.gateway_n8n_executor_token
+  })
+}
+
+module "gateway_anthropic_api_key_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_gateway_anthropic_api_key"
+  description = "Anthropic API key for the gateway's metered lane, minted in the dedicated Console workspace homelab-gateway whose monthly spend limit is the outer bound (spec §7.3, set BEFORE the key is minted). Holders, exhaustively: this entry, the gateway pod (env ANTHROPIC_API_KEY via ESO in namespace gateway), nobody else — never a worker, never n8n, never CI"
+  secret_value = jsonencode({
+    api_key = var.gateway_anthropic_api_key
+  })
+}
+
+module "gateway_harbor_docker_pull_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_harbor_docker_pull_gateway"
+  description = "Pull-only Harbor robot for the gateway project (gateway images); holders: this entry and the imagePullSecret in namespace gateway"
+  secret_value = jsonencode({
+    username = var.gateway_harbor_docker_pull_username
+    password = var.gateway_harbor_docker_pull_password
+    registry = var.harbor_registry_domain
+  })
+}

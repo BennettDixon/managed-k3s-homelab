@@ -11,7 +11,8 @@
 # unmanaged (a single ~600-day-old access key). ESO in this repo only ever
 # performs GetSecretValue (no PushSecret resources exist anywhere under apps/
 # or infrastructure/), so this replacement identity is scoped read-only to
-# exactly the 13 secrets ESO consumes.
+# exactly the secrets ESO consumes (13 at the 2026-09-09 cutover; +3 for the
+# gateway, 2026-09-10 — every new entry joins this list in its own PR).
 #
 # CUTOVER IS A GATED OPERATOR STEP — see docs/runbooks/external-secrets-iam.md.
 # Merging this changes NOTHING live: nothing reconciles from terraform, and the
@@ -53,7 +54,12 @@ resource "aws_iam_policy" "external_secrets_reader" {
           module.alerts_webhook_secret.secret_arn,
           module.tailscale_oauth_secret.secret_arn,
           module.personal_site_recaptcha_secret.secret_arn,
-          module.contact_me_gmail_account_details_secret.secret_arn
+          module.contact_me_gmail_account_details_secret.secret_arn,
+          # gateway (docs/specs/gateway.md §7.1; added in the same PR as the
+          # modules — the first dollar-spending credential on this path).
+          module.gateway_caller_tokens_secret.secret_arn,
+          module.gateway_anthropic_api_key_secret.secret_arn,
+          module.gateway_harbor_docker_pull_secret.secret_arn
         ]
       }
     ]

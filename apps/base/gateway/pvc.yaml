@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gateway-data
+  namespace: gateway
+spec:
+  # Unlike knowledge-mcp's index this file is NOT a cache: it is enforcement
+  # state — every project's period spend, every job-cap pin, the brake latch
+  # (spec §1). Losing it loses no money, but a fresh PVC reopens every period
+  # budget; the Console workspace spend limit (spec §7.3) bounds that, and
+  # Litestream to the NAS is the named DR seam (spec §11). Single-site by
+  # placement: it does NOT survive a compute-site outage, and neither does
+  # anything that would call it. local-path enforces no claim size —
+  # gateway_db_bytes (GatewayDbOversized) is the real cap.
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

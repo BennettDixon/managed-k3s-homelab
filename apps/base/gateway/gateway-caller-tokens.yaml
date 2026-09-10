@@ -1,0 +1,25 @@
+# Caller-token JSON map (spec §2, SIGN-OFF 7 — the house auth shape, second
+# consumer after knowledge-mcp): ONE SM secret whose entire value is
+# {"operator": "<token>", "n8n-executor": "<token>"}. The remoteRef carries
+# no `property` ON PURPOSE — the service wants the whole map as one env var
+# and resolves caller_id -> class/projects/ceilings through the repo registry
+# (registry.yaml). Adding a caller = a new key in the SM map (terraform,
+# targeted apply) + a `callers:` line in registry.yaml. The lane-agent token
+# is minted with the deferred subscription lane, not in v1.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: gateway-caller-tokens
+  namespace: gateway
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: gateway-caller-tokens
+    creationPolicy: Owner
+  data:
+    - secretKey: tokens
+      remoteRef:
+        key: k3s_gateway_caller_tokens
