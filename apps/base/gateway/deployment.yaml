@@ -23,8 +23,8 @@ spec:
       # uvicorn's graceful shutdown is 25 s (timeout_graceful_shutdown in
       # services/gateway/src/gateway/main.py): an in-flight provider call gets
       # cancelled and settles AT its reservation before SIGKILL, so a
-      # Recreate deploy mid-call over-counts by at most one worst case and
-      # never under-counts. Must stay above 25 s.
+      # Recreate deploy mid-call over-counts by at most one worst case per
+      # in-flight request and never under-counts. Must stay above 25 s.
       terminationGracePeriodSeconds: 30
       # Hardening block cloned from knowledge-mcp (spec §8). This pod holds a
       # dollar-spending credential in its environment and nothing else: no
@@ -45,7 +45,7 @@ spec:
           # Built and pushed from the workbench; the tag moves together with
           # services/gateway/pyproject.toml's version and __init__.__version__
           # (the version-bump CI guard in .github/workflows/gateway.yml).
-          image: harbor.internal/gateway/gateway:0.1.0
+          image: harbor.internal/gateway/gateway:0.1.1
           ports:
             - containerPort: 8080
               name: http
@@ -115,22 +115,28 @@ spec:
               port: http
             periodSeconds: 5
             failureThreshold: 24
-          # Liveness = process + DB open, NEVER writes. Readiness = a WRITE
-          # ping (spec §8: a write-accepting service — a full disk must take
-          # the gateway down, never let it spend unrecorded) + registry
-          # parsed + token map loaded + key present + clock guard. Lane
-          # health is in neither: a dead key must not take /ledger/* down.
+          # Liveness = process + DB open (a read ping), NEVER writes.
+          # Readiness = a WRITE ping (spec §8: a write-accepting service — a
+          # full disk must take the gateway down, never let it spend
+          # unrecorded) + registry parsed + token map loaded + key present +
+          # clock guard. Lane health is in neither: a dead key must not take
+          # /ledger/* down. Both pings take the ledger's process mutex, which
+          # a synchronous=FULL commit holds across a disk stall — so 3 s
+          # (not the 1 s default) before a stalled fsync counts as a failed
+          # probe; a liveness restart mid-call costs a swept reservation.
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
             periodSeconds: 10
+            timeoutSeconds: 3
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
             periodSeconds: 10
-          # Measured 73 MiB RSS at boot on the 0.1.0 image (2026-09-10).
+            timeoutSeconds: 3
+          # Measured 73 MiB RSS at boot on the 2026-09-10 local build.
           resources:
             requests:
               cpu: 50m

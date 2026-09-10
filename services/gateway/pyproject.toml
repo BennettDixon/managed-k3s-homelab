@@ -3,7 +3,7 @@ name = "gateway"
 # The version-bump CI guard (.github/workflows/gateway.yml) reads this field:
 # an image-affecting change must move it together with src/gateway/__init__.py
 # and, once slice 2 lands, the tag in apps/base/gateway/deployment.yaml.
-version = "0.1.0"
+version = "0.1.1"
 description = "Model gateway: OpenAI-compatible chat completions under a per-project budget ledger (spec docs/specs/gateway.md)"
 readme = "README.md"
 requires-python = ">=3.12"

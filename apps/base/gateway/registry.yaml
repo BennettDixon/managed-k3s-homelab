@@ -7,9 +7,11 @@
 # PR a human reads. Public-repo safe by construction: MagicDNS names only.
 prices_as_of: 2026-09-09          # operator attestation; feeds gateway_price_table_age_seconds
 # Attested Console workspace `homelab-gateway` monthly spend limit AFTER the
-# deliberate $1 trip of slice 2 (spec §7.3: above Σ caps, ~2x). CI enforces
-# Σ projects.cap_usd <= this (never a readiness check, so a cap-raising PR
-# can never freeze the chain).
+# deliberate $1 trip of slice 2 (spec §7.3: above Σ caps, ~2x). Between the
+# merge and runbook step 5 of "First live call" the live limit is $1, so the
+# attestation is false for that window on purpose (and a PVC loss in it is
+# bounded by $1, not $50). CI enforces Σ projects.cap_usd <= this (never a
+# readiness check, so a cap-raising PR can never freeze the chain).
 console_workspace_limit_usd: 50
 models:                           # USD per MTok; the registry copy is authoritative once merged
   claude-opus-5:    {input: 5.00, output: 25.00, cache_write_5m: 6.25, cache_write_1h: 10.00, cache_read: 0.50, max_tokens: 16000, default_max_tokens: 4096, effort: true,  lanes: [subscription, metered], cli_alias: opus}

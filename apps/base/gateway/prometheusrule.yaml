@@ -126,7 +126,13 @@ spec:
           # died between reserve and settle — power cut, OOM, a Recreate
           # mid-call — and the orphan was settled AT its reservation. Over-
           # counting is the safe direction; reconcile against the Console.
-          expr: sum(increase(gateway_swept_usd_total{namespace="gateway"}[1h])) > 0
+          # NOT increase(): the sweep increments the counter BEFORE the
+          # listener opens, i.e. before the new pod's series has a first
+          # sample, and Prometheus never credits a series' first value — an
+          # increase() form can never fire for a boot sweep (slice-2 review).
+          # The plain comparison fires for the life of the pod that swept and
+          # resolves at the next clean boot: the reconcile is the ack.
+          expr: gateway_swept_usd_total{namespace="gateway"} > 0
           for: 0m
           labels:
             severity: warning
@@ -140,6 +146,30 @@ spec:
               at the monthly line (docs/runbooks/gateway.md "Monthly
               reconcile"). Repeated firings without a known restart = a
               crash loop worth reading kubectl logs for.
+        - alert: GatewayScopeExhausted
+          # As-built addition (slice-2 review): the operator's per-caller
+          # daily ceiling ($5, registry max_day_billed_usd) equals the
+          # metered brake ($5), and the enforcement order is job ->
+          # caller_day -> project -> brake, so operator traffic is refused
+          # at scope=caller_day BEFORE the brake can latch, and the n8n
+          # executor is bounded at $1/month — in v1 the brake page is
+          # unreachable and a looping workbench token that stays under $2/h
+          # would burn $5/day with no alert. This is that alert: a
+          # caller-day or project-period refusal in the last hour. Refusals
+          # increment at request time, so increase() sees them.
+          expr: increase(gateway_refusals_total{namespace="gateway", scope=~"caller_day|project_period"}[1h]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a gateway caller or project hit its daily / monthly ceiling"
+            description: >-
+              At least one request was refused with 402 scope={{ $labels.scope }}
+              in the last hour: a caller reached its max_day_billed_usd or a
+              project its cap_usd. Money has stopped for that scope until
+              00:00 UTC / the next month. Read /ledger/requests for the
+              scope, find what spent it; a legitimate need is a registry PR,
+              a loop is a caller to stop.
         - alert: GatewaySettleOverReserve
           # The reservation invariant slipped (spec §5): a provider reported
           # more than the worst case the ledger reserved. Settled at actual,

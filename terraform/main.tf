@@ -227,7 +227,7 @@ module "knowledge_harbor_docker_pull_secret" {
 module "gateway_caller_tokens_secret" {
   source      = "./modules/secrets_manager"
   secret_name = "k3s_gateway_caller_tokens"
-  description = "gateway caller-token JSON map (caller_id -> token); policy lives in the repo registry apps/base/gateway/registry.yaml. Out-of-band holders: the operator value in the workbench env (GATEWAY_TOKEN / OPENAI_API_KEY of OpenAI-speaking tools); the n8n-executor value in the n8n LXC env as GATEWAY_EXECUTOR_TOKEN (slice 3). The lane-agent token is minted with the deferred subscription lane, not here"
+  description = "gateway caller-token JSON map (caller_id -> token); policy lives in the repo registry apps/base/gateway/registry.yaml. Out-of-band holders: the operator value in the operator workbench account env as GATEWAY_TOKEN (handed to an OpenAI-speaking tool only per tool, together with OPENAI_BASE_URL, never as a global OPENAI_API_KEY); the n8n-executor value in the n8n LXC env as GATEWAY_EXECUTOR_TOKEN (slice 3). The lane-agent token is minted with the deferred subscription lane, not here"
   # The WHOLE secret value is the map: the ExternalSecret reads it with no
   # `property`, so the pod receives {"operator": ..., "n8n-executor": ...}
   # verbatim as GATEWAY_CALLER_TOKENS (house auth shape, knowledge-mcp

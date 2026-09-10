@@ -109,9 +109,11 @@ def parse_caller_tokens(raw: str) -> dict[str, str]:
                 f"caller id at map position {position} is not a valid identifier (must match {ID_RE.pattern})"
             )
         if not isinstance(token, str) or len(token) < 16:
-            raise ConfigError(f"caller {caller_id}: token must be a string of at least 16 chars")
+            # Position, not id: a key/value paste swap would otherwise print
+            # the token as the "caller id" into the shipped boot log.
+            raise ConfigError(f"caller at map position {position}: token must be a string of at least 16 chars")
         if token in seen:
-            raise ConfigError(f"caller {caller_id}: token value duplicates another caller's")
+            raise ConfigError(f"caller at map position {position}: token value duplicates another caller's")
         seen.add(token)
         tokens[caller_id] = token
     if not tokens:

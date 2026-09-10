@@ -7,8 +7,11 @@ the ledger, alerts) live in the spec: `docs/specs/gateway.md`. Manifests:
 the client's `OPENAI_API_KEY`). Terraform: three modules in
 `terraform/main.tf`, their ARNs in `terraform/iam-external-secrets.tf`.
 
-**Status: slice 2 opened 2026-09-10 — NOT merged, nothing on the cluster.**
-v1 is metered-only (spec SIGN-OFF 9); the subscription lane is deferred.
+**Status: slice 2 = PR #24, opened 2026-09-10 — NOT merged, nothing on the
+cluster.** v1 is metered-only (spec SIGN-OFF 9); the subscription lane is
+deferred. The image tag is 0.1.1: the slice-2 review fixed two slice-1
+code paths (the idle probe clearing a spend-limit cooldown; a caller-map
+parse error echoing a swapped token) and the version moved with them.
 
 ## Operator prerequisites (only a human can do these)
 
@@ -75,26 +78,36 @@ change per window. Do NOT merge the manifests PR until ALL of these exist:
      login for the whole build. The n8n-executor value ALSO goes into the
      n8n LXC env as `GATEWAY_EXECUTOR_TOKEN` at slice 3, not before.
    - `gateway_anthropic_api_key` — prerequisite 1.
-   - `gateway_harbor_docker_pull_username` / `_password` — the robot from
-     prerequisite 3 (full `robot$gateway+gateway-pull` name).
-4. **Harbor project + robot + the image PUSHED** at the manifest's tag:
+   - `gateway_harbor_docker_pull_username` / `_password` — the robot
+     minted in prerequisite 3 (full `robot$gateway+gateway-pull` name).
+     The robot exists BEFORE this apply; step 4 below is only the push.
+   If the plan shows anything beyond 6 / 1 / 0 but nothing to destroy, it
+   is out-of-band drift on one of the 16 existing entries the policy
+   depends on (a console-edited version, as with the Harbor password in
+   2026-09-02) surfacing through the `-target` on the policy — read which
+   resource, resolve the drift first, never apply through it.
+4. **The image PUSHED** at the manifest's tag (the project and robot exist
+   from prerequisite 3):
    ```bash
    cd services/gateway
-   docker buildx build --platform linux/amd64 \
-     -t harbor.internal/gateway/gateway:0.1.0 --push .
+   docker buildx build --builder desktop-linux --platform linux/amd64 \
+     -t harbor.internal/gateway/gateway:0.1.1 --push .
    ```
    The tag must equal the one in `apps/base/gateway/deployment.yaml`
-   (0.1.0; the version-bump CI guard keeps it equal to `pyproject.toml`).
-   Use the `desktop-linux` docker-driver builder (the default context on the
-   workbench; `--builder default` is a context name there and fails):
-   `docker-container` builders push from inside BuildKit, which does not
-   trust the homelab root CA. The Dockerfile's base-image tags
+   (0.1.1; the version-bump CI guard keeps it equal to `pyproject.toml`).
+   `desktop-linux` is the docker-driver builder (on the workbench it is
+   also the default context; `--builder default` names a context there and
+   fails): `docker-container` builders push from inside BuildKit, which
+   does not trust the homelab root CA. The pull policy is `IfNotPresent`
+   (precedent): a rebuild pushed under the SAME tag is never re-pulled by
+   a node that has it — every image change moves the tag. The Dockerfile's base-image tags
    (`python:3.12-slim`, `ghcr.io/astral-sh/uv:0.10.10`) were proven to build
    on 2026-09-10 (54 MB image, user 10001, boots read-only, 73 MiB RSS).
 5. **Registry parseable**: `apps/base/gateway/registry.yaml` passes the
    service's admission rules AND Σ `cap_usd` ≤ `console_workspace_limit_usd`.
    CI runs `tests/test_registry_manifest.py` against the real file (and the
-   deployment's env) on every PR touching either; locally
+   deployment's env) on every PR touching `apps/base/gateway/**` or the
+   service; locally
    `uv run pytest -q tests/test_registry_manifest.py` in `services/gateway`.
 6. **No tailnet node named `gateway`** — prerequisite 4.
 7. **Merge, watch Flux** ("First run after merge", below).
@@ -133,7 +146,7 @@ deploy that interrupted a call; reconcile at the monthly line.
    merge commit; `kubectl -n gateway get externalsecret` → all three
    `SecretSynced`; `kubectl -n gateway get pods` → `1/1 Running` with
    `kubectl -n gateway get deploy gateway -o jsonpath='{.spec.template.spec.containers[0].image}'`
-   = `harbor.internal/gateway/gateway:0.1.0`. Diagnose from kubectl, not
+   = `harbor.internal/gateway/gateway:0.1.1`. Diagnose from kubectl, not
    the tailnet — a NotReady pod has no Service endpoints, so
    `http://gateway` simply refuses connections: `SecretSyncedError` with
    `AccessDenied` = gate step 1/3 (the ARN missing from the reader policy,
@@ -146,18 +159,24 @@ deploy that interrupted a call; reconcile at the monthly line.
    post-merge, ESO's error backoff can take ~17 min to retry — annotate the
    ExternalSecret with `force-sync=$(date +%s)` to shortcut it.
 2. **Probes over the tailnet** (once Ready): `curl http://gateway/healthz`
-   and `/readyz` → `{"ok":true,"version":"0.1.0"}`.
+   and `/readyz` → `{"ok":true,"version":"0.1.1"}`.
 3. **Rules and scrape**: `kubectl -n gateway get prometheusrule` present;
    in Prometheus `up{namespace="gateway"}` = 1, `gateway_db_bytes` > 0,
    `gateway_lane_up{lane="metered"}` = 1 (the idle `models.list()` probe
-   passed: the key works, the path is open), and the 12 `Gateway*` rules
-   loaded (the prometheus container has no curl; query through the
-   alertmanager pod's busybox `wget` as `docs/runbooks/alerts.md` shows).
+   passed: the key works, the path is open), and the 13 `Gateway*` rules
+   loaded (`kubectl -n kube-prometheus-stack port-forward
+   svc/kube-prometheus-stack-prometheus 9090` then
+   `curl -s localhost:9090/api/v1/rules | jq '[.data.groups[].rules[] | select(.name | startswith("Gateway"))] | length'`,
+   as `docs/runbooks/alerts.md` does). The first `Gateway*` alert that
+   fires must render its `{{ $labels.* }}` annotation — the first Go-template
+   braces in this repo's rules; Flux postBuild substitutes `${…}` only.
 4. **§13 check 2 — `count_tokens` latency from the compute site** (needs the
-   key, so it runs here, inside the pod, never from a worker): 20 calls,
-   p50/p95; > 500 ms p95 reopens heuristic-first (spec §5):
+   key, so it runs here, inside the pod, never from a worker — a one-time
+   measurement, never a money question; `kubectl exec` stays out of every
+   other section): 20 calls, p50/p95; > 500 ms p95 reopens heuristic-first
+   (spec §5). `-i` is required or `python -` reads EOF and prints nothing:
    ```bash
-   kubectl -n gateway exec deploy/gateway -- python - <<'PY'
+   kubectl -n gateway exec -i deploy/gateway -- python - <<'PY'
    import os, time, anthropic
    c = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], max_retries=0)
    t = []
@@ -212,34 +231,60 @@ gw() { curl -sS -D - -X POST http://gateway/v1/chat/completions \
    `settled ≤ reserved` holding or `GatewaySettleOverReserve` firing.
 4. **The deliberate $1 workspace-limit trip** (spec §7.3, the cheapest
    proof that a leaked key's blast radius is the limit, not the org).
-   Precondition: the workspace limit is still $1 (prerequisite 1). Spend
-   past it on `homelab-ops` with the operator token — Opus at its 16000
-   `max_tokens` bills ≈ $0.40 per long answer, so three to five calls:
+   Precondition: the workspace limit is still $1 (prerequisite 1). Spec
+   §7.3 says "with Haiku"; `gateway-smoke` (the Haiku project) is itself
+   capped at $1/month, equal to the limit, so the ledger would refuse
+   before the provider could — the trip therefore runs on `homelab-ops`
+   with the operator token (recorded as a slice-2 as-built delta). Opus at
+   8000 `max_tokens` bills ≈ $0.20 per long answer (16000 would run past
+   the 300 s read timeout and settle as `504 E_TIMEOUT` — the same money,
+   the wrong proof), with the request timeout raised so nothing is cut
+   short:
    ```bash
-   for i in 1 2 3 4 5; do gw homelab-ops 5.00 '{"model":"opus","max_tokens":16000,"messages":[{"role":"user","content":"Write a 10,000-word essay on the history of the electrical grid."}]}' | head -20; done
+   for i in 1 2 3 4 5 6 7 8; do curl -sS -D - -o /dev/null -X POST http://gateway/v1/chat/completions \
+     -H "Authorization: Bearer $GATEWAY_TOKEN" -H 'Content-Type: application/json' \
+     -H 'X-Gateway-Project: homelab-ops' -H 'X-Gateway-Budget-Cap-USD: 5.00' -H 'X-Gateway-Timeout-S: 600' \
+     -d '{"model":"opus","max_tokens":8000,"messages":[{"role":"user","content":"Write a 6,000-word essay on the history of the electrical grid."}]}' | /usr/bin/grep -E '^HTTP|^x-gateway|^retry-after'; done
    ```
    The provider's limit enforcement lags its usage aggregation, so keep
    calling until a call answers **`503 E_LANE_UNAVAILABLE`** with a
-   `Retry-After` — bounded in the worst case by the $5 daily brake
-   (`402 scope=brake_metered`, which would itself page
-   `GatewayMeteredBrakeTripped`: fine, that is the other half of the proof;
-   reset it afterwards). Record the provider's exact error shape from the
-   pod log (`evt=lane_down`, with `status`, `error_type`, whether a
+   `Retry-After`. **The worst case is $5, not $1**: the operator token's
+   `max_day_billed_usd` ($5) is checked BEFORE the gateway-wide brake ($5,
+   the same number) and refuses with `402 scope=caller_day` — which fires
+   `GatewayScopeExhausted` (morning), not the brake page. In v1 the brake
+   page (`GatewayMeteredBrakeTripped`) is unreachable from any caller (the
+   executor is bounded at $1/month); it is the backstop for future
+   callers, and the `caller_day` refusal is this proof's other half. If
+   the day cap refuses before the provider limit trips, wait for 00:00 UTC
+   (or lower the Console limit further if it allows) — never raise the
+   caller ceiling for a proof. Record the provider's exact error shape from
+   the pod log (`evt=lane_down`, with `status`, `error_type`, whether a
    `retry-after` header was present) in the "(verify)" table. Then:
-   `gateway_lane_up{lane="metered"}` = 0, `/ledger/lanes` shows the lane
-   down with `cooling_until`, and after 30 min **`GatewayLaneDown`**
-   reaches Telegram (`GatewaySpendRateAnomaly` may already have fired at
-   > $2/h — expected only here). The trip costs about $1–2 of real money.
+   `gateway_lane_up{lane="metered"}` = 0 and it STAYS 0 (the idle
+   `models.list()` probe is not gated by a spend limit and, since 0.1.1,
+   no longer clears the cooldown), `/ledger/lanes` shows `cooling_until`,
+   and after 30 min **`GatewayLaneDown`** reaches Telegram
+   (`GatewaySpendRateAnomaly` may already have fired at > $2/h — expected
+   only here). If `models.list()` turns out to be gated by the limit too,
+   the probe marks the lane down on its own — record which in the table.
 5. **Raise the limit** in the Console to the attested $50
-   (`console_workspace_limit_usd`). The lane re-probes hourly while down;
-   to shortcut, `kubectl -n gateway delete pod -l app=gateway` (Recreate;
-   the sweep finds nothing in flight). Confirm `gateway_lane_up` = 1 and a
-   repeat of step 1 succeeds.
+   (`console_workspace_limit_usd`) — after `GatewayLaneDown` has arrived,
+   or the alert half of the proof is lost. The lane goes half-open at the
+   provider's resume time (or one hour without one) and the next real
+   request clears the cooldown; to shortcut, `kubectl -n gateway delete
+   pod -l app=gateway` (Recreate; the sweep finds nothing in flight).
+   Confirm `gateway_lane_up` = 1 and a repeat of step 1 succeeds. From
+   here the registry's attestation is true.
 6. **STATUS.md** (a decisions-log line + the session log) and
-   `mini/mcp-config.md` (the `GATEWAY_TOKEN` line for OpenAI-speaking
-   tools: `OPENAI_BASE_URL=http://gateway/v1`,
-   `OPENAI_API_KEY=$GATEWAY_TOKEN`, plus `X-Gateway-Project` and
-   `X-Gateway-Budget-Cap-USD` as default headers).
+   `mini/mcp-config.md`: the token is exported ONLY as `GATEWAY_TOKEN` in
+   the operator (`bennett`) account's `~/.zshenv` — never as a global
+   `OPENAI_API_KEY`, which every OpenAI-speaking tool without an
+   `OPENAI_BASE_URL` override would send to api.openai.com. A tool that
+   should use the gateway gets `OPENAI_BASE_URL=http://gateway/v1` and
+   `OPENAI_API_KEY=$GATEWAY_TOKEN` together, in that tool's own config,
+   plus `X-Gateway-Project` and `X-Gateway-Budget-Cap-USD` as default
+   headers. Not on the `agent` account (it gets its own caller id when it
+   first needs one).
 
 ## Rotation — one credential per principal per window
 
@@ -253,7 +298,7 @@ second bounce) → update every holder of the old value:
 
 | caller id | holder | update |
 |---|---|---|
-| `operator` | the operator's workbench `~/.zshenv` (`GATEWAY_TOKEN`); any OpenAI-speaking tool configured with it | edit, restart the session |
+| `operator` | the operator's workbench `~/.zshenv` (`GATEWAY_TOKEN`); any OpenAI-speaking tool configured with it per tool; any phone HTTP client the operator chose to keep it in for `/ledger/*` reads (then it IS a holder — rotate it too) | edit, restart the session |
 | `n8n-executor` | the n8n LXC `/etc/n8n/n8n.env` as `GATEWAY_EXECUTOR_TOKEN` (from slice 3) | edit, `systemctl restart n8n` (the alert receiver blinks ~10 s) |
 | (deferred) `worker-01` lane token | `/etc/worker/gateway.env` as `GATEWAY_LANE_TOKEN` — only when the subscription lane ships | edit, restart the unit |
 
@@ -286,8 +331,9 @@ attestation and the reality move together.
 
 ## Diagnosis from a phone (`/ledger/*`, never `kubectl exec`)
 
-Every ledger read is an operator-class GET over the tailnet — from a phone
-on the tailnet, a browser with the token pasted into an HTTP client works:
+Every ledger read is an operator-class GET over the tailnet — from any
+tailnet device that holds the operator token (the workbench, or a phone HTTP
+client you have deliberately made a holder — see the rotation table):
 
 | question | call |
 |---|---|
@@ -327,7 +373,8 @@ lane splits routes), so "pages" means "worth reading at 3 am":
 | `GatewayMetricsAbsent` | warning | morning — but while it fires the two pages are blind | Deployment / Service label / monitor label |
 | `GatewayProjectNearCap` | warning | morning | raise `cap_usd` (registry PR) or let it stop at 402 |
 | `GatewayFallbackSpend` | warning | morning; in metered-only v1 it is a bug | rows with `fallback=1` |
-| `GatewaySweptSpend` | warning | morning | expected after any unclean stop / deploy mid-call; reconcile |
+| `GatewaySweptSpend` | warning | morning — stays up for the life of the pod that swept, resolves at the next clean boot | expected after any unclean stop / deploy mid-call; reconcile is the ack |
+| `GatewayScopeExhausted` (as-built) | warning | morning | a caller hit `max_day_billed_usd` or a project its `cap_usd`: `/ledger/requests` for the scope; a loop to stop or a registry PR |
 | `GatewaySettleOverReserve` | warning | morning | the reservation margin; `BILLED_PRICE_MULTIPLIER_PCT=110` if US-pinned |
 | `GatewayLaneDown` (30 m) | warning | morning | `/ledger/lanes`; the workspace limit, the network, provider 5xx |
 | `GatewayLaneAuthFailed` (10 m) | warning | morning | key revoked / rotation skew — "Rotation" |
@@ -335,6 +382,8 @@ lane splits routes), so "pages" means "worth reading at 3 am":
 | `GatewayDbOversized` | warning | morning | schedule the pruning task (destructive, human) |
 | `GatewayPriceTableStale` (90 d) | warning | morning | registry PR: prices + `prices_as_of` |
 
+13 rules ship: the spec §9 table minus `GatewaySubscriptionCooling`, plus
+`GatewayMetricsAbsent` and `GatewayScopeExhausted` (as-built, above).
 Not shipped: `GatewaySubscriptionCooling` (spec §9) — the pod emits no
 subscription-lane series in v1; the rule ships with the deferred lane's own
 PR so no rule ever describes a lane the running pod lacks (the jobs-mcp #16
@@ -368,13 +417,16 @@ Filled at the first live call; blank = not yet measured. Spec §5, §6.1,
 |---|---|---|
 | §13-1 pod → `https://api.anthropic.com/v1/models` | 401 without a key proves the path | **✅ 2026-09-10**: 401 ×3 from a scratch pod, ~110 ms each |
 | §13-2 `count_tokens` p50 / p95 from the compute site | < 500 ms p95, else heuristic-first | — (First run step 4) |
+| §13-2 `count_tokens` 5xx/429 failure mode → the byte-heuristic path | covered by the unit fake (`tests/test_upstream.py`, `test_properties.py`); not exercisable live without fault injection against the real key | deferred — noted, not measured |
 | §13-10 no tailnet node named `gateway` | none | **✅ 2026-09-10** (re-check at merge) |
 | §13-14 no literal `${…}` in any gateway manifest / the kustomize output | only jobs-mcp's `${N8N_TAILNET_FQDN}` in the whole prod build | **✅ 2026-09-10**: base output clean; the prod build's one placeholder is jobs-mcp's; CI test scans the base's YAML |
 | §13-15 Console tier offers workspace + workspace-scoped key + workspace spend limit | yes | — (prerequisite 1) |
 | `service_tier: "standard_only"` and `output_config.{effort,format}` accepted by name | yes (SDK 1.4 field names) | — (First live call steps 1 and 3) |
 | does `count_tokens` count `output_config` grammar tokens | unknown; the byte heuristic counts the schema | — (step 3: `settled ≤ reserved` or `GatewaySettleOverReserve`) |
 | `usage.inference_geo` on the first live call | absent / non-US ⇒ multiplier stays 100; US-pinned ⇒ set `BILLED_PRICE_MULTIPLIER_PCT=110` | — (step 1 row) |
-| workspace spend-limit error shape | a 429 without `retry-after`, a 403 `billing_error`, or a 400 — the code maps the first two to `E_LANE_UNAVAILABLE` and reads a 400's message for spend-limit markers | — (step 4, `evt=lane_down`) |
+| workspace spend-limit error shape | a 429 without `retry-after`, a 403 `billing_error`, or a 400 — the code maps the first two to `E_LANE_UNAVAILABLE` and reads a 400's message for spend-limit markers (a plain `rate_limit_error` 429 without `retry-after` is also mapped to the spend limit: availability only, released, no spend — revisit after the measurement) | — (step 4, `evt=lane_down`) |
+| is `models.list()` gated by the workspace spend limit | unknown; assumed NOT (hence the 0.1.1 probe fix) — if it is, the probe marks the lane down by itself | — (step 4) |
+| §13-9 max-`max_tokens` Opus under the 300 s read timeout | unmeasured; the trip uses 8000 with `X-Gateway-Timeout-S: 600` to stay clear | — (opportunistic: the trip's `latency_ms` rows) |
 | refusal `stop_reason` mapping | `refusal` ⇒ `finish_reason: content_filter`, still settled from usage | — (opportunistic) |
 | provider `request-id` header lands in the row | yes | — (step 1 row, `provider_request_id`) |
 

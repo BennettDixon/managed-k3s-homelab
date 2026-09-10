@@ -117,6 +117,18 @@ class MeteredLane:
         self._changed("lane_down", reason="spend limit", cooling_until=self._cooling_until)
 
     def probe_ok(self, now: int) -> None:
+        self._last_ok = now
+        if self._cooling_until is not None:
+            # A workspace spend limit gates generations, not models.list(): a
+            # passing idle probe says nothing about it, so it must not clear
+            # the cooldown (it would flap the lane up within 60 s and silence
+            # GatewayLaneDown — slice-2 review). Only a request that succeeds
+            # after the resume time (half-open, see check()) clears cooling.
+            # The probe does still prove the credential.
+            if not self._auth_ok:
+                self._auth_ok = True
+                self._changed("lane_auth_restored")
+            return
         self.record_success(now)
 
     def probe_failed(self, now: int, kind: str) -> None:
