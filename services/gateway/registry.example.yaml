@@ -1,0 +1,22 @@
+# Example registry (spec §4) — the shape apps/base/gateway/registry.yaml takes
+# at slice 2. Parsed under the service's own admission rules in CI
+# (tests/test_registry_manifest.py) and used by `uv run gateway-smoke-local`.
+# Prices are USD per MTok; the registry copy is authoritative once merged.
+prices_as_of: 2026-09-09          # operator attestation; feeds gateway_price_table_age_seconds
+console_workspace_limit_usd: 50   # attested; CI enforces Σ projects.cap_usd <= this (never a readiness check)
+models:
+  claude-opus-5:    {input: 5.00, output: 25.00, cache_write_5m: 6.25, cache_write_1h: 10.00, cache_read: 0.50, max_tokens: 16000, default_max_tokens: 4096, effort: true,  lanes: [subscription, metered], cli_alias: opus}
+  claude-sonnet-5:  {input: 2.00, output: 10.00, cache_write_5m: 2.50, cache_write_1h: 4.00,  cache_read: 0.20, max_tokens: 16000, default_max_tokens: 4096, effort: true,  lanes: [subscription, metered], cli_alias: sonnet}
+  claude-haiku-4-5: {input: 1.00, output: 5.00,  cache_write_5m: 1.25, cache_write_1h: 2.00,  cache_read: 0.10, max_tokens: 8000,  default_max_tokens: 1024, effort: false, lanes: [metered]}
+aliases: {opus: claude-opus-5, sonnet: claude-sonnet-5, haiku: claude-haiku-4-5}
+# subscription: {harness_overhead_tokens, concurrency, max_per_hour, window_5h_list_usd, window_7d_list_usd}
+#   — the deferred lane's quota block (§6.2); ships with that lane, not in v1
+projects:
+  homelab-ops:   {cap_usd: 20.00, period: month, lanes: [metered], default_lane: metered, fallback_allowed: false, max_request_cap_usd: 5.00, default_model: claude-sonnet-5, models: [claude-sonnet-5, claude-opus-5, claude-haiku-4-5]}
+  gateway-smoke: {cap_usd: 1.00,  period: month, lanes: [metered], default_lane: metered, fallback_allowed: false, max_request_cap_usd: 0.10, default_model: claude-haiku-4-5, models: [claude-haiku-4-5]}
+callers:                          # policy only; tokens live in the SM map (both sides must agree, fail closed)
+  # max_day_billed_usd is the per-caller daily ceiling behind the `caller_day`
+  # refusal scope (spec §3; §15 tail: "$5 billed per day" on the operator's token).
+  operator:      {class: operator,   projects: [homelab-ops, gateway-smoke], lanes: [metered], max_request_cap_usd: 5.00, max_day_billed_usd: 5.00}
+  n8n-executor:  {class: executor,   projects: [gateway-smoke],              lanes: [metered], max_request_cap_usd: 0.10}
+  # worker-01:   {class: lane-agent, lane: subscription}   # minted with the deferred lane, not in v1
