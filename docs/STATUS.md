@@ -3,7 +3,7 @@
 Rolling status of the personal-cloud buildout. Updated at the end of every working
 session. Tailnet MagicDNS names only — no LAN IPs or site details in this file.
 
-_Last updated: 2026-09-09_
+_Last updated: 2026-09-10_
 
 ## Standing infrastructure
 
@@ -52,6 +52,13 @@ _Last updated: 2026-09-09_
   per-caller tokens. Spec `docs/specs/knowledge-mcp.md`;
   runbook `docs/runbooks/knowledge-mcp.md`; source
   `services/knowledge-mcp/`; manifests `apps/base/knowledge-mcp/`.
+- **gateway — slice 1 MERGED 2026-09-10 (PR #22), NOT DEPLOYED:** the model
+  gateway's code, tests and CI (`services/gateway/`, the first Python service
+  of the house; `.github/workflows/gateway.yml` with the version-bump guard).
+  Nothing runs on the cluster until slice 2 lands the manifests behind the
+  spec §8 MERGE GATE. Spec `docs/specs/gateway.md` (as-built deltas at the
+  top); source `services/gateway/` (README carries the verify line;
+  `uv run gateway-smoke-local` proves the ledger against a stub upstream).
 - **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS),
   `edgepve` (edge — host tailscale is its management path; see
   `proxmox/edgepve.md`).
@@ -235,6 +242,57 @@ hardening changes; then gateway slices. Landed since:
   64Mi /tmp), and a PR-only CI guard that fails an image-input change
   without a version + tag bump — the drift that left #16 undeployed.
 
+## Session log — gateway slice 1 (2026-09-09 → 09-10)
+
+Spec → code in a fresh session with the spec as the single input, then the
+house adversarial review, then merge:
+
+- **PR #22 — gateway slice 1, MERGED 2026-09-10 (squash `a7a7544`).**
+  `services/gateway/` in Python (SIGN-OFF 1): the §1 ledger (integer µUSD,
+  one `sqlite3` connection with `isolation_level=None`, one mutex, explicit
+  `BEGIN IMMEDIATE`, compare-and-add on `scope_totals`, boot recompute, clock
+  guard, job-cap pin, brake latch), §4 registry admission, the §3 OpenAI
+  subset (reject-by-name; sampling params stripped and declared; buffered
+  `stream`), the metered client behind an interface with a fake, the lane
+  state machine, probes, metrics, `gateway-smoke-local`. 224 tests in ~4 s
+  including the §14 property tests (hypothesis stateful runs, N parallel
+  reserves against `cap = k·w`, a crash injected between every pair of SQL
+  statements followed by restart + sweep). CI: ruff, mypy --strict, pytest,
+  the smoke, `uv lock --check`, and the PR-only version-bump guard ported to
+  `pyproject.toml` (its manifest-tag half arms when slice 2 lands the
+  Deployment). Nothing reconciles or spends.
+- **Review: three lenses** (money red-team, Python/async runtime critic,
+  spec-conformance + identity + CI) — 3 HIGH-class findings (two reviewers
+  converged on each), 10 MED, ~20 LOW; every HIGH and MED fixed with a test
+  before merge. Headline fixes: a client disconnect on the buffered stream
+  could strand the reservation until the next boot sweep (the money path now
+  runs as a detached, shielded task; the abort on a real cancellation is a
+  synchronous write); connect-phase timeouts settled at the full reservation
+  and never counted toward lane-down (per-call connect budget; a connect
+  timeout releases like a refused connection); refusals still shipped the
+  prompt to `count_tokens` (a read-only pre-admission on a 32-token floor runs
+  first — cap 0 makes zero provider calls). Also: a post-call ledger failure
+  is a non-retryable 503; the boot sweep settles every `reserved` row and
+  runs after `quick_check`, with boot failures going to readiness instead of
+  a crash loop; `403 billing_error` is the spend limit, not an auth flap;
+  in-stream `error` events are classified by type; the class table is one
+  ASGI middleware. As-built deltas are recorded at the top of the spec.
+- **Judgment calls recorded in the PR** (all reversible): an optional
+  per-caller `max_day_billed_usd` behind the `caller_day` scope; the
+  request-cap ceiling is the tightest of `MAX_REQUEST_CAP_USD`, the caller's
+  and the project's `max_request_cap_usd`; `E_NOT_FOUND` (404) joins the
+  taxonomy; a client disconnect settles from usage (≤ the reservation)
+  rather than at it.
+- **LiteLLM considered and declined for v1** (decisions log).
+- **Slice 2 owes the spec's `(verify)` items on the first live call:**
+  whether `count_tokens` counts `output_config` grammar tokens (the byte
+  heuristic now counts a `json_schema`), the 429-without-`retry-after`
+  spend-limit shape, `usage.inference_geo`; plus
+  `terminationGracePeriodSeconds` ≥ 30 (uvicorn's graceful shutdown is 25 s)
+  and parsing the deployed registry in CI with the manifest's
+  `MAX_REQUEST_CAP_USD`.
+- No cluster changes this session; no pulse taken (agent-only work).
+
 ## Parked (deliberate, not forgotten)
 - **~~knowledge-mcp vector store~~ — DECIDED 2026-09-02** (spec
   `docs/specs/knowledge-mcp.md` §1, panel + adversarial critique):
@@ -361,22 +419,32 @@ and the one remaining gate step are the operator's:
 
 ## Next session starts with
 
-- **Gateway spec APPROVED 2026-09-09 (PR #21, `docs/specs/gateway.md`)** —
-  panel of four opposed drafts, a bench critic, a design critic and a money
-  red-team, then synthesis; nine sign-offs recorded: Python (the house
-  language for every new service from here on; jobs-mcp and knowledge-mcp
-  stay TS); k3s pod; lane header optional with a project default and no
-  silent fallback; house SQLite with integer micro-USD; list-equivalent USD
-  as the cap unit on every lane (`0` forbids every call) and as jobs-mcp's
-  `spent_usd`; chat completions + models only; the caller-token map with a
-  closed class set; a metadata-only ledger-row log; **the subscription lane
-  is deferred** (operator: hold off on using the subscription for automated
-  jobs) — v1 is metered-only and the pull-agent design stays in the spec as
-  the seam. **Next: slice 1** — `services/gateway/` in Python (OpenAI subset,
-  registry + admission, the ledger with its property tests, metered client,
-  probes, metrics, CI with the version-bump guard): agent-only, no
-  manifests, nothing spends. Start it in a fresh session with the spec as
-  the single input, then the adversarial review the house budgets.
+- **Gateway slice 2 — secrets, Harbor, manifests, runbook, first live call**
+  (spec §7, §8 MERGE GATE, §13, §14). Slice 1 is merged (PR #22) and deployed
+  nowhere. The order is load-bearing, one reconciliation-chain change per
+  window: (1) ESO reader identity — done 2026-09-09; (2) OPERATOR: Console
+  workspace `homelab-gateway` with a monthly spend limit set BEFORE the key
+  is minted (set it to $1 first for the deliberate trip, raise afterwards),
+  the workspace-scoped key straight into `terraform.tfvars`; (3) three SM
+  entries as terraform modules + their `.secret_arn` in
+  `terraform/iam-external-secrets.tf` in the SAME PR — targeted plan expected
+  **6 add / 1 change / 0 destroy** (the policy changes in place; anything to
+  destroy means STOP), one SSO login for the whole build; (4) OPERATOR:
+  Harbor project `gateway` + pull robot (secret into tfvars) + the image
+  pushed from the `desktop-linux` builder at the manifest's tag (`0.1.0`);
+  (5) `apps/base/gateway/registry.yaml` from
+  `services/gateway/registry.example.yaml` with the operator's caps, passing
+  CI incl. Σ caps ≤ the attested workspace limit; (6) no tailnet node named
+  `gateway`; (7) merge, watch Flux, verify on the cluster (pod on 0.1.0,
+  both ExternalSecrets synced, `/readyz` 200 over the tailnet, the §9 rules
+  loaded). Then the first live operator call from the workbench: `haiku`,
+  `max_tokens: 5`, cap `0.01` ⇒ `X-Gateway-Lane-Used: metered`, non-zero
+  `X-Gateway-Billed-USD`, the row in `/ledger/requests`,
+  `gateway_billed_usd_total > 0` scraped; cap `0` ⇒ `402`; the deliberate $1
+  workspace-limit trip ⇒ `503` + alert; then raise the limit. §13 checks 1,
+  2, 7, 10, 14, 15 land in `docs/runbooks/gateway.md`. STATUS +
+  `mini/mcp-config.md` lines after. Slice 3 (`gateway-smoke` task type, the
+  jobs-mcp §11 proof) follows only once slice 2 is live.
 - ~~Merge PR #19~~ merged and verified live 2026-09-09: pod on 0.2.0, the
   hardening block applied, the probe in the running bundle — #16's loop is
   closed on the cluster, not only in git.
@@ -466,3 +534,32 @@ and the one remaining gate step are the operator's:
   subscription for automated jobs. Gateway v1 is metered-only; the
   pull-agent design stays in the spec as the seam; reopening is an explicit
   operator decision, not a tripwire.
+- 2026-09-10: gateway slice 1 merged (PR #22) with the as-built deltas the
+  review forced, recorded at the top of the spec: a client disconnect never
+  cancels a provider call in flight (the call completes and settles from its
+  usage, ≤ the reservation; only a pod shutdown mid-call settles AT the
+  reservation as `aborted`); the boot sweep settles every `reserved` row
+  regardless of timestamp (a stale-RTC orphan is still an orphan);
+  connect-phase timeouts release like a refused connection and count toward
+  lane-down, only read timeouts settle at the reservation; refusals never
+  reach `count_tokens` (a count-independent pre-admission runs first).
+- 2026-09-10: LiteLLM considered as a replacement for the gateway and
+  DECLINED for v1: its budgets are settle-at-end (a $0.01 remaining budget
+  admits a $5 call; N concurrent requests jointly overshoot — the model §15
+  rejects by name), it has no per-request budget cap (job caps would mean the
+  executor minting virtual keys with a management credential), it needs
+  Postgres for any budget feature (reversing SIGN-OFF 4 through the back
+  door), its router retries/fallbacks are default-on, and prompt storage is a
+  setting rather than a schema fact. Reopen at the §11 tripwires (tools,
+  token streaming, images, a second provider, a local lane): the likely shape
+  then is the gateway's ledger and admission IN FRONT of LiteLLM as the
+  translation layer, never LiteLLM alone.
+- 2026-09-10: `services/gateway/` is the Python precedent the next service
+  copies (the six house idioms ported once: loud env validation, caller-map
+  parse + constant-time auth, healthz/readyz split, zero-filled series,
+  additive migrations, one-line JSON logs) plus two async lessons the TS
+  review corpus did not carry: Starlette cancels a streaming response's
+  generator on client disconnect and anyio re-delivers `CancelledError` at
+  every await, so money paths run as detached shielded tasks and aborts write
+  synchronously; a scalar SDK timeout makes the connect phase as long as the
+  read phase, so every provider call carries `httpx2.Timeout(total, connect=10)`.
