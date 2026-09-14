@@ -18,7 +18,14 @@ const N8N_DIR = join(REPO_ROOT, "n8n");
 
 interface WorkflowNode {
   type: string;
-  parameters?: { path?: string; httpMethod?: string; options?: { timeout?: number } };
+  parameters?: {
+    path?: string;
+    httpMethod?: string;
+    url?: string;
+    jsCode?: string;
+    headerParameters?: { parameters?: { name: string; value: string }[] };
+    options?: { timeout?: number };
+  };
 }
 interface Workflow {
   name: string;
@@ -65,5 +72,42 @@ describe("deployed registry (apps/base/jobs-mcp/registry.yaml)", () => {
     const wf = workflows.find((w) => w.name === "knowledge-reingest")!;
     const http = wf.nodes.find((n) => n.type === "n8n-nodes-base.httpRequest")!;
     expect(http.parameters?.options?.timeout).toBeLessThan(kr!.timeout_s * 1000);
+  });
+
+  it("gateway-smoke: payload fence, timeout ordering, and the executor's gateway fences", () => {
+    const gs = registry.get("gateway-smoke");
+    expect(gs).toBeDefined();
+    expect(gs!.frontend_allowed).toBe(false);
+    const valid = gs!.validatePayload!;
+    expect(valid({})).toBe(true);
+    expect(valid({ model: "haiku", prompt: "Say hi" })).toBe(true);
+    expect(valid({ model: "opus" })).toBe(false);
+    expect(valid({ prompt: "" })).toBe(false);
+    expect(valid({ prompt: "x".repeat(2049) })).toBe(false);
+    expect(valid({ extra: 1 })).toBe(false);
+
+    const wf = workflows.find((w) => w.name === "gateway-smoke")!;
+    const http = wf.nodes.filter((n) => n.type === "n8n-nodes-base.httpRequest");
+    expect(http).toHaveLength(2);
+    // Sequential HTTP nodes: their timeouts SUM, and must end before the dispatcher gives up.
+    const total = http.reduce((sum, n) => sum + (n.parameters?.options?.timeout ?? Number.POSITIVE_INFINITY), 0);
+    expect(total).toBeLessThan(gs!.timeout_s * 1000);
+    for (const n of http) {
+      // Only the gateway, only over the tailnet name, only with the class-scoped executor token.
+      expect(n.parameters?.url ?? "").toMatch(/^=?\{?\{? ?'?http:\/\/gateway\//);
+      const headers = n.parameters?.headerParameters?.parameters ?? [];
+      expect(headers.find((x) => x.name === "Authorization")?.value).toBe("=Bearer {{ $env.GATEWAY_EXECUTOR_TOKEN }}");
+    }
+    const call = http.find((n) => (n.parameters?.url ?? "").endsWith("/v1/chat/completions"))!;
+    const h = Object.fromEntries((call.parameters?.headerParameters?.parameters ?? []).map((x) => [x.name, x.value]));
+    expect(h["X-Gateway-Project"]).toBe("gateway-smoke");
+    expect(h["X-Gateway-Job-Id"]).toBe("={{ $json.job_id }}");
+    // The gateway gives up before n8n does, so a slow provider settles inside the gateway, not as an n8n timeout.
+    expect(Number(h["X-Gateway-Timeout-S"]) * 1000).toBeLessThan(call.parameters?.options?.timeout ?? 0);
+    // The first Code node verifies the webhook secret before anything else runs.
+    const first = wf.nodes.find((n) => n.type === "n8n-nodes-base.code")!;
+    expect(first.parameters?.jsCode ?? "").toContain("x-jobs-webhook-secret");
+    // Never a jobs-mcp bearer or a literal token in the export.
+    expect(JSON.stringify(wf)).not.toMatch(/JOBS_MCP_BEARER_TOKEN|Bearer [0-9a-f]{16,}/);
   });
 });

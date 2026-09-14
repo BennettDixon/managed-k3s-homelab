@@ -39,3 +39,39 @@ task_types:
         corpus:
           type: string
           pattern: "^[a-z0-9][a-z0-9-]{1,62}$"
+  gateway-smoke:
+    # The jobs-mcp §11 proof (gateway spec §14 slice 3): the first task type that
+    # spends, with zero jobs-mcp code changes. The n8n executor reads the job's
+    # gateway ledger, then makes at most one 64-token Haiku call on the
+    # `gateway-smoke` project with the class-scoped n8n-executor token
+    # ($env.GATEWAY_EXECUTOR_TOKEN: one project, job id mandatory, $0.10 per
+    # request, the project's $1/month cap). The job's budget_cap becomes the
+    # gateway job cap, pinned by the first attempt; `budget_cap: 0` is refused
+    # at the gateway with E_BUDGET_EXCEEDED and nothing is spent. The executor
+    # reports `spent_usd` = the job's cumulative list-equivalent USD from the
+    # gateway — non-null for the first time in jobs-mcp's history.
+    # idempotent: true by the ledger-read rule (gateway spec §11): a retry after
+    # a settled call reports that spend instead of calling again, so a re-run is
+    # bounded by the job cap, never free. max_attempts 2: a refusal is final and
+    # a transient gateway 503 gets one retry. timeout_s 120 stays ABOVE the
+    # workflow's sequential HTTP budget (15 s ledger read + 60 s call, and the
+    # gateway is told to give up at 50 s) so a slow call fails inside n8n as a
+    # visible execution error, never an orphaned execution. The prompt is
+    # capped at 2048 characters here and 2 KiB of UTF-8 in the executor.
+    executor: n8n
+    webhook_path: jobs/gateway-smoke
+    timeout_s: 120
+    max_attempts: 2
+    idempotent: true
+    frontend_allowed: false
+    payload_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        model:
+          type: string
+          enum: [haiku]
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2048

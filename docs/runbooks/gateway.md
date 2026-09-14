@@ -449,9 +449,61 @@ brake and the Console workspace limit until the month turns. Record the
 loss in STATUS; consider lowering caps for the rest of the month. Litestream
 to the NAS is the named DR seam (needs a NAS user — appliance-tier).
 
-## MERGE GATE (slice 3 — `gateway-smoke` task type) — not built
+## MERGE GATE (slice 3 — `gateway-smoke` task type) — order is load-bearing
 
-Pointer only (spec §8, §14): slice 2 live and `/readyz` 200 over the
-tailnet; `n8n-executor` token in the SM map (done here) AND the n8n env;
-`gateway-smoke` workflow imported ACTIVE through the workbench key;
-executor proven directly with the webhook secret. Its own PR.
+The registry change hash-rolls jobs-mcp (Recreate, seconds of downtime, no
+queue loss), and jobs-mcp's non-fatal startup check then expects the workflow
+to exist and be active. Do NOT merge the task-type PR until ALL of these hold:
+
+1. **Slice 2 is live** — done 2026-09-14 (`/readyz` 200 over the tailnet).
+2. **The `n8n-executor` token in BOTH places:** the SM map (minted at slice
+   2) AND `/etc/n8n/n8n.env` as `GATEWAY_EXECUTOR_TOKEN`, then
+   `systemctl restart n8n` (the alert receiver and the jobs executors blink
+   for ~10 s). The value is `gateway_n8n_executor_token` in `terraform.tfvars`;
+   write it with a script that never prints it (the `KNOWLEDGE_REINGEST_TOKEN`
+   precedent: `pct push` a file into CT 121, append, restart). Workflows can
+   read it because `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` — and so can every
+   workflow author, which is why this token is class-scoped: one project, a
+   job id on every call, $0.10 per request, the project's $1/month cap.
+3. **Workflow `gateway-smoke` imported and ACTIVE** from
+   `n8n/gateway-smoke.json` through the workbench `N8N_API_KEY` (the
+   cluster-synced jobs-mcp key is read-only). Confirm `active: true`.
+4. **Executor proven directly**, bypassing the queue, with the webhook secret
+   exported as `JOBS_WEBHOOK_SECRET` (`jobs_mcp_webhook_secret` in tfvars).
+   Use a job id that no real job will ever have:
+   ```bash
+   gws() { curl -sS -X POST http://n8n:5678/webhook/jobs/gateway-smoke \
+     -H "X-Jobs-Webhook-Secret: $JOBS_WEBHOOK_SECRET" -H 'Content-Type: application/json' -d "$1"; echo; }
+   gws '{"job_id":"manual-gw-smoke-1","attempt":1,"payload":{},"budget_cap_usd":0.05,"artifacts_out":[]}'
+   ```
+   Expect `{"ok":true,"result":{"request_id":…,"model":"claude-haiku-4-5-…","usage":{…},"billed_usd":…,"list_usd":…},"artifacts":[],"spent_usd":<> 0}`.
+   Send the same body again: expect `"reused_prior_call": true` with the same
+   `spent_usd` and no new ledger row — the idempotency rule. Then a NEW job
+   id with `"budget_cap_usd":0`: expect `ok:false` with `E_BUDGET_EXCEEDED`
+   and `scope=request` in `error.message`, and no row. A forged secret:
+   `unauthorized`. The whole proof costs well under $0.001.
+
+Diagnosis for gate 4 lives in the n8n execution: `gateway /ledger/jobs
+returned 401` = the n8n env and the SM map disagree (gate 2); a connection
+error on `Read job ledger` = n8n cannot reach `tag:k8s` Services (it could on
+2026-09-02); `403 E_FORBIDDEN` = the registry grants the `n8n-executor`
+caller something else.
+
+## First run after merge (slice 3)
+
+1. **jobs-mcp rolled** onto the new registry: `kubectl -n jobs-mcp get pods`
+   shows a fresh pod, and its startup log lists `gateway-smoke` with the
+   workflow found active.
+2. **The §11 proof** from any jobs-mcp client:
+   `enqueue {task_type: "gateway-smoke", payload: {}, budget_cap: 0.05, artifacts_out: []}`
+   → `status(id)` reaches `succeeded` with `spent_usd` **non-null and > 0 —
+   the first time in jobs-mcp's history** — equal to the gateway's own
+   figure: `GET http://gateway/ledger/jobs/<id>?caller=n8n-executor` with
+   the operator token (the operator may read the executor's jobs because its
+   projects cover the executor's).
+3. **The negative proof:** the same with `budget_cap: 0` → `failed`
+   (`retries_exhausted` after 2 attempts) with `E_BUDGET_EXCEEDED` in
+   `error.message`, `/ledger/jobs/<id>?caller=n8n-executor` answering 404 (no
+   rows), and $0 spent.
+4. `knowledge-reingest` and `smoke-heartbeat` are untouched: one
+   `smoke-heartbeat` enqueue still succeeds.
