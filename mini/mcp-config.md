@@ -79,3 +79,38 @@ server started (`echo ${KNOWLEDGE_MCP_TOKEN:+set}`). Tools: `search`, `fetch`, `
 id (one more map key + `callers:` line) rather than the operator token when
 it needs access; NanoClaw is never registered against this token — it gets a
 `frontend`-class id and a curated corpus (spec SIGN-OFF 3).
+
+## gateway
+
+The model gateway (live since 2026-09-14, slice 2) is not an MCP server: it
+is an OpenAI-compatible HTTP endpoint at `http://gateway/v1` (tailnet-only)
+under a per-project budget ledger. Spec `docs/specs/gateway.md`; runbook
+`docs/runbooks/gateway.md`.
+
+The operator caller token (the `operator` entry of the caller-token map,
+terraform var `gateway_operator_token`) lives ONLY in the `bennett`
+account's `~/.zshenv`, under its own name:
+
+```bash
+# ~/.zshenv on the workbench (bennett account only) — value from terraform.tfvars, never committed
+export GATEWAY_TOKEN="..."
+```
+
+**Never export it as `OPENAI_API_KEY`.** Every OpenAI-speaking tool without
+an `OPENAI_BASE_URL` override would send it to api.openai.com. A tool that
+should use the gateway gets both settings together, in that tool's own
+config, plus the two gateway headers every request needs:
+
+| setting | value |
+|---|---|
+| `OPENAI_BASE_URL` | `http://gateway/v1` |
+| `OPENAI_API_KEY` | `$GATEWAY_TOKEN`, per tool |
+| header `X-Gateway-Project` | `homelab-ops` (or `gateway-smoke` for tests) |
+| header `X-Gateway-Budget-Cap-USD` | the request's cap, required, no default; `0` refuses |
+
+The operator token's ceilings are in `apps/base/gateway/registry.yaml`: $5
+per request and $5 billed per UTC day. The `agent` account gets its own
+caller id (one more map key + a `callers:` line) when it first needs the
+gateway, never this token. NanoClaw is never a gateway caller. Rotation:
+tfvars, targeted apply, ESO force-sync, pod delete, then update
+`~/.zshenv` (runbook "Rotation").
