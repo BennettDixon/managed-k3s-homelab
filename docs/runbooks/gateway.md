@@ -7,8 +7,9 @@ the ledger, alerts) live in the spec: `docs/specs/gateway.md`. Manifests:
 the client's `OPENAI_API_KEY`). Terraform: three modules in
 `terraform/main.tf`, their ARNs in `terraform/iam-external-secrets.tf`.
 
-**Status: slice 2 = PR #24, opened 2026-09-10 — NOT merged, nothing on the
-cluster.** v1 is metered-only (spec SIGN-OFF 9); the subscription lane is
+**Status: slice 2 LANDED 2026-09-14** (PR #24 merged 13:33Z; Flux, the pod
+on 0.1.1, the three ExternalSecrets, `/readyz` over the tailnet and the 13
+rules verified on the cluster by 13:37Z; first live call 13:41Z). v1 is metered-only (spec SIGN-OFF 9); the subscription lane is
 deferred. The image tag is 0.1.1: the slice-2 review fixed two slice-1
 code paths (the idle probe clearing a spend-limit cooldown; a caller-map
 parse error echoing a swapped token) and the version moved with them.
@@ -220,8 +221,13 @@ gw() { curl -sS -D - -X POST http://gateway/v1/chat/completions \
    `E_UPSTREAM_ERROR` naming the field).
 2. **Cap 0 ⇒ 402**: the same body with cap `0` →
    `402 E_BUDGET_EXCEEDED scope=request`, `x-should-retry: false`, no row,
-   no provider call (`gateway_refusals_total{scope="request"}` moved;
-   `gateway_requests_total` did not).
+   no provider call: `gateway_refusals_total{scope="request"}` and
+   `gateway_requests_total{outcome="refused_cap"}` each move by one, while
+   `gateway_tokens_total`, `gateway_billed_usd_total` and
+   `gateway_upstream_errors_total` do not. Check "no row" by request ID or
+   by `reserved_at`, never with a `since` that starts before the previous
+   call (measured 2026-09-14: a one-second back-off pulled the proof
+   call's row into the window).
 3. **Structured output** (spec §13 check 7 / the `count_tokens` grammar
    question): repeat step 1 with `"response_format":{"type":"json_schema",
    "json_schema":{"name":"hi","schema":{"type":"object","properties":{"greeting":{"type":"string"}},"required":["greeting"],"additionalProperties":false}}}`
@@ -416,19 +422,19 @@ Filled at the first live call; blank = not yet measured. Spec §5, §6.1,
 | item | expected / hypothesis | measured (date) |
 |---|---|---|
 | §13-1 pod → `https://api.anthropic.com/v1/models` | 401 without a key proves the path | **✅ 2026-09-10**: 401 ×3 from a scratch pod, ~110 ms each |
-| §13-2 `count_tokens` p50 / p95 from the compute site | < 500 ms p95, else heuristic-first | — (First run step 4) |
+| §13-2 `count_tokens` p50 / p95 from the compute site | < 500 ms p95, else heuristic-first | **✅ 2026-09-14**: p50 123 ms, p95 162 ms, max 414 ms over 20 calls from inside the pod, no errors — count-first stands |
 | §13-2 `count_tokens` 5xx/429 failure mode → the byte-heuristic path | covered by the unit fake (`tests/test_upstream.py`, `test_properties.py`); not exercisable live without fault injection against the real key | deferred — noted, not measured |
 | §13-10 no tailnet node named `gateway` | none | **✅ 2026-09-10** (re-check at merge) |
 | §13-14 no literal `${…}` in any gateway manifest / the kustomize output | only jobs-mcp's `${N8N_TAILNET_FQDN}` in the whole prod build | **✅ 2026-09-10**: base output clean; the prod build's one placeholder is jobs-mcp's; CI test scans the base's YAML |
-| §13-15 Console tier offers workspace + workspace-scoped key + workspace spend limit | yes | — (prerequisite 1) |
-| `service_tier: "standard_only"` and `output_config.{effort,format}` accepted by name | yes (SDK 1.4 field names) | — (First live call steps 1 and 3) |
-| does `count_tokens` count `output_config` grammar tokens | unknown; the byte heuristic counts the schema | — (step 3: `settled ≤ reserved` or `GatewaySettleOverReserve`) |
-| `usage.inference_geo` on the first live call | absent / non-US ⇒ multiplier stays 100; US-pinned ⇒ set `BILLED_PRICE_MULTIPLIER_PCT=110` | — (step 1 row) |
+| §13-15 Console tier offers workspace + workspace-scoped key + workspace spend limit | yes | **✅ 2026-09-14**: workspace `homelab-gateway` with a $1 monthly limit set before its workspace-scoped key was minted |
+| `service_tier: "standard_only"` and `output_config.{effort,format}` accepted by name | yes (SDK 1.4 field names) | **✅ 2026-09-14**: accepted on the proof call and on a `json_schema` call (valid JSON matching the schema, `finish_reason: stop`); `effort` not yet exercised (Haiku has none) |
+| does `count_tokens` count `output_config` grammar tokens | unknown; the byte heuristic counts the schema | **✅ YES, 2026-09-14**: a one-field schema on "Say hi" billed 149 input tokens against 9 without it, and `count_tokens` returned 149 (reserve `in_tokens` 189 = ⌈149 × 1.05⌉ + 32); no fallback, no over-reserve |
+| `usage.inference_geo` on the first live call | absent / non-US ⇒ multiplier stays 100; US-pinned ⇒ set `BILLED_PRICE_MULTIPLIER_PCT=110` | **✅ 2026-09-14**: `not_available` on both calls — the multiplier stays at 100 |
 | workspace spend-limit error shape | a 429 without `retry-after`, a 403 `billing_error`, or a 400 — the code maps the first two to `E_LANE_UNAVAILABLE` and reads a 400's message for spend-limit markers (a plain `rate_limit_error` 429 without `retry-after` is also mapped to the spend limit: availability only, released, no spend — revisit after the measurement) | — (step 4, `evt=lane_down`) |
 | is `models.list()` gated by the workspace spend limit | unknown; assumed NOT (hence the 0.1.1 probe fix) — if it is, the probe marks the lane down by itself | — (step 4) |
 | §13-9 max-`max_tokens` Opus under the 300 s read timeout | unmeasured; the trip uses 8000 with `X-Gateway-Timeout-S: 600` to stay clear | — (opportunistic: the trip's `latency_ms` rows) |
 | refusal `stop_reason` mapping | `refusal` ⇒ `finish_reason: content_filter`, still settled from usage | — (opportunistic) |
-| provider `request-id` header lands in the row | yes | — (step 1 row, `provider_request_id`) |
+| provider `request-id` header lands in the row | yes | **✅ 2026-09-14**: `provider_request_id` set; `model_used` records the dated Haiku id the provider reported |
 
 ## Rebuild from scratch (PVC lost)
 
