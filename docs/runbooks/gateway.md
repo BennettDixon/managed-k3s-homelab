@@ -282,7 +282,9 @@ gw() { curl -sS -D - -X POST http://gateway/v1/chat/completions \
    request clears the cooldown; to shortcut, `kubectl -n gateway delete
    pod -l app=gateway` (Recreate; the sweep finds nothing in flight).
    Confirm `gateway_lane_up` = 1 and a repeat of step 1 succeeds. From
-   here the registry's attestation is true.
+   here the registry's attestation is true. **Measured 2026-09-14:** raised
+   to $50 at ~14:34Z; after the pod delete the lane was up in 12 s, a Haiku
+   call succeeded, and `GatewayLaneDown` resolved within a minute.
 6. **STATUS.md** (a decisions-log line + the session log) and
    `mini/mcp-config.md`: the token is exported ONLY as `GATEWAY_TOKEN` in
    the operator (`bennett`) account's `~/.zshenv` — never as a global

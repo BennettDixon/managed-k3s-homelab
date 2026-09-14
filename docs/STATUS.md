@@ -345,7 +345,13 @@ house adversarial review, then merge:
   "Lane metered …" — the first `{{ $labels.* }}` annotation in this repo's
   rules, so Flux's postBuild substitution provably leaves Go templates alone;
   Alertmanager logged no delivery errors.
-- **Limit raise and recovery:** PENDING.
+- **Limit raise and recovery:** the operator raised the workspace limit to
+  $50 at ~14:34Z (the attested `console_workspace_limit_usd`). With in-flight
+  reservations checked at zero first, a pod delete skipped the one-hour
+  cooldown: the replacement booted in 12 s with nothing swept, a Haiku call
+  succeeded, and `GatewayLaneDown` resolved at 14:35:59Z with no other gateway
+  alert raised. The ledger survived the restart; the Prometheus counters reset,
+  which is why the monthly reconcile reads the ledger.
 
 ## Parked (deliberate, not forgotten)
 - **~~knowledge-mcp vector store~~ — DECIDED 2026-09-02** (spec
