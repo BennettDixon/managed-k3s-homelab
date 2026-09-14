@@ -8,7 +8,7 @@ site).
 | Path | What lives there |
 |------|------------------|
 | `apps/`, `clusters/`, `infrastructure/` | Flux GitOps tree (kustomize bases + per-cluster overlays) |
-| `services/` | Service source code: `jobs-mcp` (task queue), `knowledge-mcp` (retrieval), `gateway` (model gateway — code + CI merged, deployed at slice 2) |
+| `services/` | Service source code: `jobs-mcp` (task queue), `knowledge-mcp` (retrieval), `gateway` (model gateway — live at `http://gateway/v1` since 2026-09-14, metered lane only) |
 | `n8n/` | Canonical n8n workflow exports (secret-free) |
 | `proxmox/` | Parameterized host/LXC/VM recipes and host notes |
 | `mini/` | Workbench (Mac mini) setup and MCP configuration |

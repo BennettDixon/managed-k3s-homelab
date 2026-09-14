@@ -3,7 +3,7 @@
 Rolling status of the personal-cloud buildout. Updated at the end of every working
 session. Tailnet MagicDNS names only — no LAN IPs or site details in this file.
 
-_Last updated: 2026-09-10_
+_Last updated: 2026-09-14_
 
 ## Standing infrastructure
 
@@ -52,12 +52,17 @@ _Last updated: 2026-09-10_
   per-caller tokens. Spec `docs/specs/knowledge-mcp.md`;
   runbook `docs/runbooks/knowledge-mcp.md`; source
   `services/knowledge-mcp/`; manifests `apps/base/knowledge-mcp/`.
-- **gateway — slice 1 MERGED 2026-09-10 (PR #22), NOT DEPLOYED:** the model
-  gateway's code, tests and CI (`services/gateway/`, the first Python service
-  of the house; `.github/workflows/gateway.yml` with the version-bump guard).
-  Nothing runs on the cluster until slice 2 lands the manifests behind the
-  spec §8 MERGE GATE. **Slice 2 = PR #24 (opened 2026-09-10), draft behind
-  its gate — reviewed, CI green, nothing on the cluster; image tag 0.1.1.** Spec `docs/specs/gateway.md` (as-built deltas at the
+- **gateway — LIVE (2026-09-14):** the model gateway at `http://gateway/v1`
+  (OpenAI-compatible chat completions, caller-token gated, tailnet-only) under
+  a per-project budget ledger in SQLite on a PVC; metered Anthropic lane only
+  (the subscription lane is deferred). Slice 1 = PR #22 (service, tests, CI);
+  slice 2 = PR #24 (three Secrets Manager entries + the ESO policy, manifests,
+  13 rules, runbook), merged 13:33Z and verified on the cluster by 13:37Z;
+  first live call 13:41Z; the deliberate $1 workspace-limit trip proved the
+  spend-limit mapping and the alert. Callers: `operator` (workbench) and
+  `n8n-executor` (minted into the map, not yet in the n8n env — slice 3).
+  Spec `docs/specs/gateway.md`; runbook `docs/runbooks/gateway.md`; source
+  `services/gateway/`; manifests `apps/base/gateway/`.
   top); source `services/gateway/` (README carries the verify line;
   `uv run gateway-smoke-local` proves the ledger against a stub upstream).
 - **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS),
@@ -294,6 +299,60 @@ house adversarial review, then merge:
   `MAX_REQUEST_CAP_USD`.
 - No cluster changes this session; no pulse taken (agent-only work).
 
+## Session log — gateway slice 2 landed (2026-09-10 → 09-14)
+
+- **PR #24 — gateway slice 2, MERGED 2026-09-14 13:33Z (`53568cd`), LIVE
+  13:36Z.** Terraform for three Secrets Manager entries with their ARNs in the
+  ESO reader policy in the same PR; `apps/base/gateway/` with knowledge-mcp's
+  hardening block, the registry at the signed caps, 13 rules; the runbook.
+  Three-lens review (money red-team, deploy critic, spec/identity critic): 3
+  HIGH, 11 MED, 15 LOW, every HIGH and MED taken. Headline catches: the
+  gateway CI did not trigger on `deployment.yaml`, so the new manifest guards
+  would never have run on a tag bump; the idle probe cleared a spend-limit
+  cooldown within 60 s (code fix → 0.1.1, proven live below);
+  `GatewaySweptSpend` used `increase()` on a counter that moves before the
+  first scrape; the operator's $5/day equals the $5 brake and is enforced
+  first (→ `GatewayScopeExhausted`).
+- **Gate, operator:** Console workspace `homelab-gateway` with a $1 limit set
+  before its workspace key; Harbor project `gateway` + pull robot; targeted
+  apply 6 add / 1 change / 0 destroy (the first plan, run from `main` without
+  targets, wanted to replace the Lightsail proxy — caught, not applied); image
+  0.1.1 pushed and pulled back to check. Before the merge, all 13 existing
+  ExternalSecrets re-read AWS under the new policy and stayed synced, and a
+  per-secret IAM simulation showed read allowed, write denied, and a control
+  secret denied.
+- **Verified on the cluster:** all 8 Flux kustomizations Ready at the merge
+  commit; the three new ExternalSecrets synced on first try; the pod on the
+  pushed digest with no SA token mounted, a read-only root and user 10001;
+  `/healthz` and `/readyz` 200 over the tailnet at `http://gateway`, a call
+  without a token 401; the tailnet name is `gateway`; 13 rules healthy and the
+  target scraped.
+- **First live calls:** Haiku, 5 tokens, cap $0.01 → 200 on the metered
+  lane, $0.000034 billed against a $0.000067 reservation, the ledger row with
+  the provider request id; cap 0 → 402, no provider call, no row; a
+  `json_schema` call → valid JSON. Measured the slice-2 `(verify)` items
+  (runbook table): `count_tokens` p95 162 ms and it counts the schema grammar
+  exactly; `inference_geo` is `not_available`; `service_tier` and
+  `output_config` are accepted.
+- **The $1 trip:** six 8000-token Opus calls at $0.2001 each (≈ 122 s each);
+  the provider admitted one call past the limit and refused the next with a
+  400 naming a month-end resume time; the gateway answered 503
+  `E_LANE_UNAVAILABLE` with the reservation released at $0 and took the lane
+  down for an hour. `count_tokens` is gated too; `models.list()` is not — an
+  idle probe succeeded while limited and, thanks to 0.1.1, left the lane down.
+  Proof spend: $1.2010. `GatewayLaneDown` fired at 14:27:03Z, 30 minutes after
+  the lane went down, and reached Telegram with its description rendered as
+  "Lane metered …" — the first `{{ $labels.* }}` annotation in this repo's
+  rules, so Flux's postBuild substitution provably leaves Go templates alone;
+  Alertmanager logged no delivery errors.
+- **Limit raise and recovery:** the operator raised the workspace limit to
+  $50 at ~14:34Z (the attested `console_workspace_limit_usd`). With in-flight
+  reservations checked at zero first, a pod delete skipped the one-hour
+  cooldown: the replacement booted in 12 s with nothing swept, a Haiku call
+  succeeded, and `GatewayLaneDown` resolved at 14:35:59Z with no other gateway
+  alert raised. The ledger survived the restart; the Prometheus counters reset,
+  which is why the monthly reconcile reads the ledger.
+
 ## Parked (deliberate, not forgotten)
 - **~~knowledge-mcp vector store~~ — DECIDED 2026-09-02** (spec
   `docs/specs/knowledge-mcp.md` §1, panel + adversarial critique):
@@ -420,33 +479,14 @@ and the one remaining gate step are the operator's:
 
 ## Next session starts with
 
-- **Gateway slice 2 — secrets, Harbor, manifests, runbook, first live call**
-  (spec §7, §8 MERGE GATE, §13, §14). Slice 1 is merged (PR #22) and deployed
-  nowhere. **PR #24 is open (draft) with all of it, three-lens reviewed; the
-  MERGE GATE steps below are the operator's, in `docs/runbooks/gateway.md`.** The order is load-bearing, one reconciliation-chain change per
-  window: (1) ESO reader identity — done 2026-09-09; (2) OPERATOR: Console
-  workspace `homelab-gateway` with a monthly spend limit set BEFORE the key
-  is minted (set it to $1 first for the deliberate trip, raise afterwards),
-  the workspace-scoped key straight into `terraform.tfvars`; (3) three SM
-  entries as terraform modules + their `.secret_arn` in
-  `terraform/iam-external-secrets.tf` in the SAME PR — targeted plan expected
-  **6 add / 1 change / 0 destroy** (the policy changes in place; anything to
-  destroy means STOP), one SSO login for the whole build; (4) OPERATOR:
-  Harbor project `gateway` + pull robot (secret into tfvars) + the image
-  pushed from the `desktop-linux` builder at the manifest's tag (`0.1.1` — moved by the slice-2 review);
-  (5) `apps/base/gateway/registry.yaml` from
-  `services/gateway/registry.example.yaml` with the operator's caps, passing
-  CI incl. Σ caps ≤ the attested workspace limit; (6) no tailnet node named
-  `gateway`; (7) merge, watch Flux, verify on the cluster (pod on 0.1.1,
-  both ExternalSecrets synced, `/readyz` 200 over the tailnet, the §9 rules
-  loaded). Then the first live operator call from the workbench: `haiku`,
-  `max_tokens: 5`, cap `0.01` ⇒ `X-Gateway-Lane-Used: metered`, non-zero
-  `X-Gateway-Billed-USD`, the row in `/ledger/requests`,
-  `gateway_billed_usd_total > 0` scraped; cap `0` ⇒ `402`; the deliberate $1
-  workspace-limit trip ⇒ `503` + alert; then raise the limit. §13 checks 1,
-  2, 7, 10, 14, 15 land in `docs/runbooks/gateway.md`. STATUS +
-  `mini/mcp-config.md` lines after. Slice 3 (`gateway-smoke` task type, the
-  jobs-mcp §11 proof) follows only once slice 2 is live.
+- **Gateway slice 3 — the `gateway-smoke` task type** (spec §14 slice 3, the
+  jobs-mcp §11 proof with zero jobs-mcp code changes): the jobs-mcp registry
+  entry + `n8n/gateway-smoke.json` in one PR, and `GATEWAY_EXECUTOR_TOKEN` in
+  the n8n env (the value is already in the SM map; the n8n restart blinks the
+  alert receiver ~10 s). Gate: slice 2 live — it is. Proof: an `enqueue` at
+  `budget_cap: 0.05` succeeds with `status(id).spent_usd` non-null and > 0 for
+  the first time in jobs-mcp's history, equal to `/ledger/jobs/{id}`; at
+  `budget_cap: 0` it fails with `E_BUDGET_EXCEEDED` and $0 spent.
 - ~~Merge PR #19~~ merged and verified live 2026-09-09: pod on 0.2.0, the
   hardening block applied, the probe in the running bundle — #16's loop is
   closed on the cluster, not only in git.
@@ -565,3 +605,13 @@ and the one remaining gate step are the operator's:
   every await, so money paths run as detached shielded tasks and aborts write
   synchronously; a scalar SDK timeout makes the connect phase as long as the
   read phase, so every provider call carries `httpx2.Timeout(total, connect=10)`.
+- 2026-09-14: gateway reservations stay count-first — `count_tokens` p95 is
+  162 ms from the compute site and it counts the structured-output grammar
+  exactly, so the byte heuristic remains a fallback only.
+- 2026-09-14: `BILLED_PRICE_MULTIPLIER_PCT` stays at 100 — `usage.inference_geo`
+  reports `not_available` on the metered key.
+- 2026-09-14: a workspace spend limit arrives as a 400
+  `invalid_request_error` naming a month-end resume time; the gateway maps it
+  to 503 `E_LANE_UNAVAILABLE` and cools the lane for ONE HOUR instead of
+  parsing that time, so raising the limit restores service within the hour.
+  Provider enforcement lag measured at one call (a $0.20 Opus overshoot).
