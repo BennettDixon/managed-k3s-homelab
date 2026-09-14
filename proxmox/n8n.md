@@ -43,6 +43,7 @@ JOBS_WEBHOOK_SECRET=<from terraform.tfvars jobs_mcp_webhook_secret>
 ALERTS_WEBHOOK_SECRET=<from terraform.tfvars alerts_webhook_secret>
 ALERTS_TELEGRAM_CHAT_ID=<numeric chat id of the operator's Telegram — never in git>
 KNOWLEDGE_REINGEST_TOKEN=<from terraform.tfvars knowledge_mcp_n8n_reingest_token>
+GATEWAY_EXECUTOR_TOKEN=<from terraform.tfvars gateway_n8n_executor_token — the gateway's class-scoped executor token>
 # JOBS_MCP_BEARER_TOKEN=<ONLY the future per-caller n8n-nightly token, never the v1 operator bearer; set when the queue-shaped nightly is re-armed — docs/runbooks/knowledge-mcp.md>
 ```
 
@@ -50,8 +51,11 @@ KNOWLEDGE_REINGEST_TOKEN=<from terraform.tfvars knowledge_mcp_n8n_reingest_token
 default, but the posture deserves stating): workflow Code nodes read `$env`
 to verify webhook shared secrets. The flip side: anyone who can author or
 edit a workflow here — the operator, the workbench API key, and the
-cluster-synced jobs-mcp API key — can read this whole env file, both
-webhook secrets included. One trust domain, on purpose.
+cluster-synced jobs-mcp API key — can read this whole env file: both
+webhook secrets, the scoped knowledge reingest token, and
+`GATEWAY_EXECUTOR_TOKEN`, which spends real money. Its gateway class bounds
+it to the `gateway-smoke` project, $0.10 per request and $1 per month
+(`docs/runbooks/gateway.md`). One trust domain, on purpose.
 
 `N8N_SECURE_COOKIE=false` because the UI is served over plain HTTP; the
 transport is the tailnet (WireGuard) — TLS here would be theater against the

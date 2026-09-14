@@ -7,18 +7,21 @@
         "path": "jobs/gateway-smoke",
         "responseMode": "responseNode"
       },
+      "id": "7e9e69ea-a388-5d9c-9e5e-1af30c621420",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         0,
         0
-      ]
+      ],
+      "webhookId": "b40b8715-91c8-5441-9644-c58d77695806"
     },
     {
       "parameters": {
-        "jsCode": "// First node MUST verify the shared secret (jobs-mcp spec §6, v1-mandatory).\n// The value lives in the LXC env (/etc/n8n/n8n.env), never in this JSON.\nconst req = $input.first().json;\nconst secret = $env.JOBS_WEBHOOK_SECRET;\nconst presented = (req.headers || {})['x-jobs-webhook-secret'];\nif (!secret || presented !== secret) {\n  return [{ json: { ok: false, error: { code: 'unauthorized', message: 'missing or invalid webhook secret' } } }];\n}\nconst body = req.body || {};\nconst fail = (code, message) => [{ json: { ok: false, error: { code, message } } }];\n// The gateway scopes spend to (caller, X-Gateway-Job-Id) and pins the first cap\n// it sees for that job (gateway spec §1, §5): both come from the dispatch body.\nconst jobId = body.job_id;\nif (typeof jobId !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(jobId)) {\n  return fail('E_SCHEMA', 'job_id is missing or is not a valid gateway job id');\n}\nconst cap = body.budget_cap_usd;\nif (typeof cap !== 'number' || !Number.isFinite(cap) || cap < 0) {\n  return fail('E_SCHEMA', 'budget_cap_usd must be a finite number >= 0');\n}\n// Defense in depth: jobs-mcp already validated payload against the registry\n// schema; re-check so an authenticated-but-forged call cannot pick a pricier\n// model or ship an oversized prompt.\nconst payload = body.payload || {};\nconst model = payload.model ?? 'haiku';\nif (model !== 'haiku') return fail('E_SCHEMA', 'payload.model must be haiku');\nconst prompt = payload.prompt ?? 'Reply with the single word: ok';\nif (typeof prompt !== 'string' || prompt.length === 0) {\n  return fail('E_SCHEMA', 'payload.prompt must be a non-empty string');\n}\nlet bytes;\ntry {\n  bytes = encodeURIComponent(prompt).replace(/%[0-9A-F]{2}/g, 'x').length;\n} catch {\n  return fail('E_SCHEMA', 'payload.prompt is not valid text');\n}\nif (bytes > 2048) return fail('E_SCHEMA', 'payload.prompt exceeds 2 KiB');\nreturn [{ json: {\n  ok: true,\n  job_id: jobId,\n  attempt: body.attempt ?? null,\n  // Fixed six decimals: every attempt of one job presents byte-identical cap\n  // text, so the gateway's job-cap pin can never see a formatting difference.\n  cap_header: cap.toFixed(6),\n  chat: { model, max_tokens: 64, messages: [{ role: 'user', content: prompt }] },\n} }];"
+        "jsCode": "// First node MUST verify the shared secret (jobs-mcp spec §6, v1-mandatory).\n// The value lives in the LXC env (/etc/n8n/n8n.env), never in this JSON.\nconst req = $input.first().json;\nconst secret = $env.JOBS_WEBHOOK_SECRET;\nconst presented = (req.headers || {})['x-jobs-webhook-secret'];\nif (!secret || presented !== secret) {\n  return [{ json: { ok: false, error: { code: 'unauthorized', message: 'missing or invalid webhook secret' } } }];\n}\nconst body = req.body || {};\n// Executor-side validation uses its own code; E_* always means the gateway refused.\nconst fail = (message) => [{ json: { ok: false, error: { code: 'executor_schema', message } } }];\n// The gateway scopes spend to (caller, X-Gateway-Job-Id) and pins the first cap\n// it sees for that job (gateway spec §1, §5): both come from the dispatch body.\nconst jobId = body.job_id;\nif (typeof jobId !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(jobId)) {\n  return fail('job_id is missing or is not a valid gateway job id');\n}\nconst cap = body.budget_cap_usd;\n// 0.10 is the n8n-executor caller's per-request ceiling in the gateway registry:\n// a larger cap would be refused 400 E_BUDGET_CAP_INVALID on every attempt.\nif (typeof cap !== 'number' || !Number.isFinite(cap) || cap < 0 || cap > 0.10) {\n  return fail('budget_cap_usd must be a number in [0, 0.10] for gateway-smoke (the n8n-executor per-request ceiling)');\n}\n// Defense in depth: jobs-mcp already validated payload against the registry\n// schema; re-check so an authenticated-but-forged call cannot pick a pricier\n// model or ship an oversized prompt.\nconst payload = body.payload || {};\nconst model = payload.model ?? 'haiku';\nif (model !== 'haiku') return fail('payload.model must be haiku');\nconst prompt = payload.prompt ?? 'Reply with the single word: ok';\nif (typeof prompt !== 'string' || prompt.length === 0) return fail('payload.prompt must be a non-empty string');\nlet bytes;\ntry {\n  bytes = encodeURIComponent(prompt).replace(/%[0-9A-F]{2}/g, 'x').length;\n} catch {\n  return fail('payload.prompt is not valid text');\n}\nif (bytes > 2048) return fail('payload.prompt exceeds 2 KiB');\n// Floored to whole micro-USD, fixed six decimals: never above the cap jobs-mcp\n// stored, and byte-identical on every attempt so the gateway's job-cap pin\n// cannot see a formatting difference. The 1e-6 absorbs binary float error\n// (0.000003 * 1e6 = 2.9999999999999996).\nconst capHeader = (Math.floor(cap * 1e6 + 1e-6) / 1e6).toFixed(6);\nreturn [{ json: {\n  ok: true,\n  job_id: jobId,\n  attempt: body.attempt ?? null,\n  cap_header: capHeader,\n  chat: { model, max_tokens: 64, messages: [{ role: 'user', content: prompt }] },\n} }];"
       },
+      "id": "81931662-fb1d-5834-ba71-355814253926",
       "name": "Verify And Build",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -38,7 +41,7 @@
           "combinator": "and",
           "conditions": [
             {
-              "id": "cond-authorized",
+              "id": "cond-ok",
               "leftValue": "={{ $json.ok }}",
               "rightValue": true,
               "operator": {
@@ -50,6 +53,7 @@
           ]
         }
       },
+      "id": "969add24-5bff-5f09-a833-85235d8667ce",
       "name": "Authorized?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -82,6 +86,7 @@
           }
         }
       },
+      "id": "17831a2a-41be-53b0-8d8c-578e5ab82332",
       "name": "Read job ledger",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -92,8 +97,9 @@
     },
     {
       "parameters": {
-        "jsCode": "// Read-the-ledger-before-calling (gateway spec §11, the idempotency rule for\n// this task type): a retry of an attempt that already generated reports that\n// spend instead of spending again. The executor never sees completion text here.\nconst built = $('Verify And Build').first().json;\nconst res = $input.first().json; // fullResponse: {data|body, headers, statusCode}\nconst raw = res.data ?? res.body;\nlet led = null;\ntry { led = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch {}\nconst fail = (code, message) => [{ json: { call: false, ok: false, error: { code, message: String(message).slice(0, 1000) } } }];\n// 404 = the gateway has no rows for this (caller, job): the first call.\nif (res.statusCode === 404) return [{ json: { call: true, ...built } }];\nif (res.statusCode !== 200 || !led) {\n  const code = led && led.error && led.error.code ? ' ' + led.error.code : '';\n  return fail('gateway_ledger_error', `gateway /ledger/jobs returned ${res.statusCode}${code}`);\n}\n// An earlier attempt still holds a reservation (it outlived jobs-mcp's timeout):\n// calling now would race it. Fail this attempt; the next one reads a settled ledger.\nif ((led.held_list_usd ?? 0) > 0) {\n  return fail('gateway_call_in_flight', `an earlier attempt of job ${built.job_id} still holds a gateway reservation`);\n}\nif ((led.requests ?? 0) > 0 && (led.spent_usd ?? 0) > 0) {\n  return [{ json: {\n    call: false,\n    ok: true,\n    result: { reused_prior_call: true, requests: led.requests, settled_billed_usd: led.settled_billed_usd ?? null },\n    artifacts: [],\n    spent_usd: led.spent_usd,\n  } }];\n}\n// Rows exist but nothing settled (every earlier call was released): safe to call.\nreturn [{ json: { call: true, ...built } }];"
+        "jsCode": "// Read the ledger before calling (gateway spec §11). This executor never reports\n// success without a completion it observed itself: /ledger/jobs counts rows\n// charged at the reservation (timeout, aborted, swept) in spent_usd, so an\n// earlier charge does not prove an earlier completion.\nconst built = $('Verify And Build').first().json;\nconst res = $input.first().json; // fullResponse: {data|body, headers, statusCode}\nconst raw = res.data ?? res.body;\nlet led = null;\ntry { led = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch {}\nconst fail = (code, message) => [{ json: { call: false, ok: false, error: { code, message: String(message).slice(0, 1000) } } }];\nconst errCode = led && led.error ? led.error.code : null;\n// 404 E_NOT_FOUND \"no ledger rows\" = the gateway has never admitted a call for\n// this (caller, job): the first call. Any other 404 is a misroute, not a first call.\nif (res.statusCode === 404 && errCode === 'E_NOT_FOUND' && /no ledger rows/.test(led.error.message || '')) {\n  return [{ json: { call: true, ...built } }];\n}\nif (res.statusCode !== 200 || !led || errCode) {\n  return fail('gateway_ledger_error', `gateway /ledger/jobs returned ${res.statusCode}${errCode ? ' ' + errCode : ''}`);\n}\nif ((led.held_list_usd ?? 0) > 0) {\n  return fail('gateway_call_in_flight',\n    `an earlier attempt of job ${built.job_id} still holds a $${led.held_list_usd} gateway reservation; retry once it settles`);\n}\nif ((led.spent_usd ?? 0) > 0) {\n  // No second spend, and no claim of a completion this attempt did not see.\n  return fail('prior_attempt_charged',\n    `job ${built.job_id} was already charged $${led.spent_usd} (list) across ${led.requests} gateway request(s); ` +\n    `not calling again, and not reporting success without a completion — GET /ledger/jobs/${built.job_id}?caller=n8n-executor is the source of truth`);\n}\n// Rows exist but nothing was charged or held (every earlier call was released): safe to call.\nreturn [{ json: { call: true, ...built } }];"
       },
+      "id": "9936e185-38c9-50d3-9762-ca616785c642",
       "name": "Decide",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -113,7 +119,7 @@
           "combinator": "and",
           "conditions": [
             {
-              "id": "cond-needs-call",
+              "id": "cond-call",
               "leftValue": "={{ $json.call }}",
               "rightValue": true,
               "operator": {
@@ -125,6 +131,7 @@
           ]
         }
       },
+      "id": "204e951e-099e-5ce0-b893-2c5af4537c14",
       "name": "Needs call?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -158,7 +165,7 @@
             },
             {
               "name": "X-Gateway-Timeout-S",
-              "value": "50"
+              "value": "20"
             }
           ]
         },
@@ -166,7 +173,7 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.chat) }}",
         "options": {
-          "timeout": 60000,
+          "timeout": 75000,
           "response": {
             "response": {
               "fullResponse": true,
@@ -176,6 +183,7 @@
           }
         }
       },
+      "id": "e36daeab-adbd-56b2-8da0-fb29a74ff084",
       "name": "Call gateway",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -186,8 +194,9 @@
     },
     {
       "parameters": {
-        "jsCode": "// Turn the gateway reply into the jobs-mcp completion report (jobs spec §6;\n// gateway spec §14 slice 3). No completion text is reported or persisted.\nconst res = $input.first().json; // fullResponse: {data|body, headers, statusCode}\nconst raw = res.data ?? res.body;\nlet body = null;\ntry { body = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch {}\nconst h = res.headers || {};\n// jobs-mcp keeps error.message (cap 1024) but the terminal error.code is always\n// retries_exhausted — so the message must carry the gateway's code and scope.\nconst fail = (code, message) => [{ json: { ok: false, error: { code: String(code).slice(0, 64), message: String(message).slice(0, 1000) } } }];\nif (res.statusCode !== 200 || !body || !Array.isArray(body.choices)) {\n  const e = (body && body.error) || {};\n  const scope = e.scope ? ` scope=${e.scope}` : '';\n  return fail(e.code || 'gateway_http_error', `gateway returned ${res.statusCode} ${e.code || ''}${scope}: ${e.message || 'unparseable response'}`);\n}\nconst g = body.gateway || {};\nconst num = (v) => (v === undefined || v === null || v === '' ? null : Number(v));\nreturn [{ json: {\n  ok: true,\n  result: {\n    request_id: g.request_id ?? h['x-gateway-request-id'] ?? null,\n    model: body.model ?? null,\n    usage: body.usage ?? null,\n    billed_usd: num(g.billed_usd ?? h['x-gateway-billed-usd']),\n    list_usd: num(g.list_usd ?? h['x-gateway-list-usd']),\n    finish_reason: (body.choices[0] && body.choices[0].finish_reason) || null,\n  },\n  artifacts: [],\n  // List-equivalent USD, cumulative over this job — the same unit as the job's\n  // budget_cap (gateway SIGN-OFF 5), and what /ledger/jobs/{id} reports.\n  spent_usd: num(g.job_spent_usd ?? h['x-gateway-job-spent-usd']),\n} }];"
+        "jsCode": "// Turn the gateway reply into the jobs-mcp completion report (jobs spec §6;\n// gateway spec §14 slice 3). No completion text is reported.\nconst res = $input.first().json; // fullResponse: {data|body, headers, statusCode}\nconst raw = res.data ?? res.body;\nlet body = null;\ntry { body = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch {}\nconst h = res.headers || {};\n// jobs-mcp keeps error.message (cap 1024) but the terminal error.code is always\n// retries_exhausted — so the message must carry the gateway's code and scope.\nconst fail = (code, message) => [{ json: { ok: false, error: { code: String(code).slice(0, 64), message: String(message).slice(0, 1000) } } }];\nif (res.statusCode !== 200 || !body || !Array.isArray(body.choices)) {\n  const e = (body && body.error) || {};\n  const scope = e.scope ? ` scope=${e.scope}` : '';\n  return fail(e.code || 'gateway_http_error', `gateway returned ${res.statusCode} ${e.code || ''}${scope}: ${e.message || 'unparseable response'}`);\n}\nconst g = body.gateway || {};\nconst num = (v) => (v === undefined || v === null || v === '' ? null : Number(v));\nconst spent = num(g.job_spent_usd ?? h['x-gateway-job-spent-usd']);\nif (spent === null || !Number.isFinite(spent)) {\n  // The gateway always reports job spend when a job id is sent; without it the\n  // report would be ok with spent_usd null, which the §11 proof must never see.\n  return fail('gateway_bad_response', 'gateway answered 200 without the job spend (gateway.job_spent_usd)');\n}\nreturn [{ json: {\n  ok: true,\n  result: {\n    request_id: g.request_id ?? h['x-gateway-request-id'] ?? null,\n    model: body.model ?? null,\n    usage: body.usage ?? null,\n    billed_usd: num(g.billed_usd ?? h['x-gateway-billed-usd']),\n    list_usd: num(g.list_usd ?? h['x-gateway-list-usd']),\n    finish_reason: (body.choices[0] && body.choices[0].finish_reason) || null,\n  },\n  artifacts: [],\n  // List-equivalent USD, cumulative over this job — the same unit as the job's\n  // budget_cap (gateway SIGN-OFF 5), and what /ledger/jobs/{id} reports.\n  spent_usd: spent,\n} }];"
       },
+      "id": "ed78724c-a2b0-5384-9cc0-bda3083dabc5",
       "name": "Report",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -200,6 +209,7 @@
       "parameters": {
         "respondWith": "firstIncomingItem"
       },
+      "id": "4039f34f-022f-5657-8570-c7357015a11c",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -313,5 +323,7 @@
       ]
     }
   },
-  "settings": {}
+  "settings": {
+    "saveDataSuccessExecution": "none"
+  }
 }

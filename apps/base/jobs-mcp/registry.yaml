@@ -46,22 +46,28 @@ task_types:
     # `gateway-smoke` project with the class-scoped n8n-executor token
     # ($env.GATEWAY_EXECUTOR_TOKEN: one project, job id mandatory, $0.10 per
     # request, the project's $1/month cap). The job's budget_cap becomes the
-    # gateway job cap, pinned by the first attempt; `budget_cap: 0` is refused
-    # at the gateway with E_BUDGET_EXCEEDED and nothing is spent. The executor
-    # reports `spent_usd` = the job's cumulative list-equivalent USD from the
-    # gateway — non-null for the first time in jobs-mcp's history.
-    # idempotent: true by the ledger-read rule (gateway spec §11): a retry after
-    # a settled call reports that spend instead of calling again, so a re-run is
-    # bounded by the job cap, never free. max_attempts 2: a refusal is final and
-    # a transient gateway 503 gets one retry. timeout_s 120 stays ABOVE the
-    # workflow's sequential HTTP budget (15 s ledger read + 60 s call, and the
-    # gateway is told to give up at 50 s) so a slow call fails inside n8n as a
-    # visible execution error, never an orphaned execution. The prompt is
-    # capped at 2048 characters here and 2 KiB of UTF-8 in the executor.
+    # gateway job cap, pinned by the first attempt: it must be in [0, 0.10]
+    # (the executor refuses more; the gateway would), `0` and any cap below one
+    # reservation (~$0.0004) are refused at the gateway with E_BUDGET_EXCEEDED
+    # scope=job, and nothing is spent. On success the executor reports
+    # `spent_usd` = the job's cumulative list-equivalent USD from the gateway —
+    # non-null for the first time in jobs-mcp's history.
+    # idempotent: true by the ledger-read rule (gateway spec §11): a retry never
+    # spends again. It also never reports success without a completion it saw —
+    # a job already charged fails with prior_attempt_charged, and the gateway
+    # ledger (/ledger/jobs/{id}?caller=n8n-executor) holds that spend.
+    # max_attempts 3: a refusal fails fast at $0 each time, and a retry that
+    # meets an earlier attempt's reservation still in flight gets another go.
+    # timeout_s 120 stays ABOVE the workflow's sequential HTTP budget (15 s ledger
+    # read + 75 s call), and the call's 75 s is ABOVE the gateway's real bound
+    # for X-Gateway-Timeout-S 20 (10 s count_tokens + 2 x (20 + 5) s + one 10 s
+    # retry delay = 70 s), so a slow provider fails inside the gateway, then
+    # inside n8n, and never as an orphaned execution. The prompt is capped at
+    # 512 characters, which is always within the spec's 2 KiB of UTF-8.
     executor: n8n
     webhook_path: jobs/gateway-smoke
     timeout_s: 120
-    max_attempts: 2
+    max_attempts: 3
     idempotent: true
     frontend_allowed: false
     payload_schema:
@@ -74,4 +80,4 @@ task_types:
         prompt:
           type: string
           minLength: 1
-          maxLength: 2048
+          maxLength: 512

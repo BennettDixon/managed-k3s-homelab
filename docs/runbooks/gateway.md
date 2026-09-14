@@ -453,57 +453,92 @@ to the NAS is the named DR seam (needs a NAS user — appliance-tier).
 
 The registry change hash-rolls jobs-mcp (Recreate, seconds of downtime, no
 queue loss), and jobs-mcp's non-fatal startup check then expects the workflow
-to exist and be active. Do NOT merge the task-type PR until ALL of these hold:
+to exist and be active. Neither can freeze the Flux chain — readiness never
+touches n8n — but merging before the gate leaves real enqueues failing. Do
+NOT merge the task-type PR until ALL of these hold:
 
-1. **Slice 2 is live** — done 2026-09-14 (`/readyz` 200 over the tailnet).
-2. **The `n8n-executor` token in BOTH places:** the SM map (minted at slice
+1. **Slice 2 is live** — done 2026-09-14.
+2. **The workbench `N8N_API_KEY` rotated** (routine hygiene before a workflow
+   import), on both workbench machines.
+3. **The `n8n-executor` token in BOTH places:** the SM map (minted at slice
    2) AND `/etc/n8n/n8n.env` as `GATEWAY_EXECUTOR_TOKEN`, then
    `systemctl restart n8n` (the alert receiver and the jobs executors blink
-   for ~10 s). The value is `gateway_n8n_executor_token` in `terraform.tfvars`;
-   write it with a script that never prints it (the `KNOWLEDGE_REINGEST_TOKEN`
-   precedent: `pct push` a file into CT 121, append, restart). Workflows can
-   read it because `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` — and so can every
-   workflow author, which is why this token is class-scoped: one project, a
-   job id on every call, $0.10 per request, the project's $1/month cap.
-3. **Workflow `gateway-smoke` imported and ACTIVE** from
-   `n8n/gateway-smoke.json` through the workbench `N8N_API_KEY` (the
+   for ~10 s). The value is `gateway_n8n_executor_token` in
+   `terraform.tfvars`; copy it into the n8n LXC with a script that never
+   prints it, as was done for `KNOWLEDGE_REINGEST_TOKEN`.
+4. **Workflow `gateway-smoke` imported and ACTIVE** from
+   `n8n/gateway-smoke.json` through the rotated workbench key (the
    cluster-synced jobs-mcp key is read-only). Confirm `active: true`.
-4. **Executor proven directly**, bypassing the queue, with the webhook secret
+5. **Executor proven directly**, bypassing the queue, with the webhook secret
    exported as `JOBS_WEBHOOK_SECRET` (`jobs_mcp_webhook_secret` in tfvars).
-   Use a job id that no real job will ever have:
+   Use a fresh job id every run: a used id is permanent in the gateway ledger.
    ```bash
    gws() { curl -sS -X POST http://n8n:5678/webhook/jobs/gateway-smoke \
      -H "X-Jobs-Webhook-Secret: $JOBS_WEBHOOK_SECRET" -H 'Content-Type: application/json' -d "$1"; echo; }
-   gws '{"job_id":"manual-gw-smoke-1","attempt":1,"payload":{},"budget_cap_usd":0.05,"artifacts_out":[]}'
+   ID=manual-gw-smoke-$(date +%s)
+   gws "{\"job_id\":\"$ID\",\"attempt\":1,\"payload\":{},\"budget_cap_usd\":0.05,\"artifacts_out\":[]}"
    ```
-   Expect `{"ok":true,"result":{"request_id":…,"model":"claude-haiku-4-5-…","usage":{…},"billed_usd":…,"list_usd":…},"artifacts":[],"spent_usd":<> 0}`.
-   Send the same body again: expect `"reused_prior_call": true` with the same
-   `spent_usd` and no new ledger row — the idempotency rule. Then a NEW job
-   id with `"budget_cap_usd":0`: expect `ok:false` with `E_BUDGET_EXCEEDED`
-   and `scope=request` in `error.message`, and no row. A forged secret:
-   `unauthorized`. The whole proof costs well under $0.001.
 
-Diagnosis for gate 4 lives in the n8n execution: `gateway /ledger/jobs
-returned 401` = the n8n env and the SM map disagree (gate 2); a connection
-error on `Read job ledger` = n8n cannot reach `tag:k8s` Services (it could on
-2026-09-02); `403 E_FORBIDDEN` = the registry grants the `n8n-executor`
-caller something else.
+   | send | expect |
+   |---|---|
+   | the body above | `ok: true`; `result` with `request_id`, `model`, `usage`, `billed_usd`, `list_usd`, `finish_reason`; `spent_usd` > 0 |
+   | the same body again | `ok: false`, `prior_attempt_charged` — no second call, no new ledger row, and no claim of a completion this attempt did not see |
+   | a new id with `budget_cap_usd: 0` | `ok: false`, `E_BUDGET_EXCEEDED` with `scope=job` in the message (a job id always selects the job scope); `/ledger/jobs/<id>?caller=n8n-executor` answers 404 |
+   | a new id with `budget_cap_usd: 0.11` | `ok: false`, `executor_schema` naming the 0.10 ceiling |
+   | a wrong secret | HTTP 200 with `ok: false`, `unauthorized` (jobs-mcp reads the report, not the status) |
+
+   The whole proof costs well under $0.001.
+
+**Diagnosis.** The reason for any `ok: false` comes back in the response, and
+in the job's `error.message` once queued. Successful executions are not saved
+(`saveDataSuccessExecution: none`), and an `ok: false` report is a successful
+execution; only n8n-level errors (a node timeout, an unreachable gateway) save
+an errored execution. What the codes mean:
+
+- `gateway_ledger_error … 401` — the n8n env and the SM map disagree (gate 3).
+- a connection error on `Read job ledger` — n8n cannot reach `tag:k8s`
+  Services (it could on 2026-09-02).
+- `403 E_FORBIDDEN` — the gateway registry grants `n8n-executor` something
+  else.
+- `gateway_call_in_flight` — an earlier attempt's call is still running; the
+  next attempt meets `prior_attempt_charged` or calls once it was released.
+- `prior_attempt_charged` — the job was already charged; nothing is spent
+  again.
+
+**Accepted risk** (the knowledge-mcp slice-3 precedent, sharper here because
+this path spends). `X-Jobs-Webhook-Secret` is persisted verbatim in every
+saved execution of this workflow — now only errored ones — readable by any
+n8n UI/API identity, and `GATEWAY_EXECUTOR_TOKEN` is readable by any workflow
+author through `$env`. Either lets someone forge dispatches with invented job
+ids, bounded by the executor class: the `gateway-smoke` project only, $0.10
+per request, $1 per month for the project, and the $5 metered daily brake
+gateway-wide. One trust domain, as `proxmox/n8n.md` states. Spec §11's
+signed-grant tripwires are not tripped: this is still the only executor
+caller, and the task type is `frontend_allowed: false`. A nonzero cap is
+chosen per enqueue, not by the registry, so that tripwire watches how the
+task type is used.
 
 ## First run after merge (slice 3)
 
-1. **jobs-mcp rolled** onto the new registry: `kubectl -n jobs-mcp get pods`
-   shows a fresh pod, and its startup log lists `gateway-smoke` with the
-   workflow found active.
+1. **jobs-mcp rolled** onto the new registry: a fresh pod in
+   `kubectl -n jobs-mcp get pods`, with no `n8n_check_workflow_missing` line
+   for `gateway-smoke` in its startup log.
 2. **The §11 proof** from any jobs-mcp client:
    `enqueue {task_type: "gateway-smoke", payload: {}, budget_cap: 0.05, artifacts_out: []}`
-   → `status(id)` reaches `succeeded` with `spent_usd` **non-null and > 0 —
-   the first time in jobs-mcp's history** — equal to the gateway's own
-   figure: `GET http://gateway/ledger/jobs/<id>?caller=n8n-executor` with
-   the operator token (the operator may read the executor's jobs because its
+   → `status(id)` reaches `succeeded` with `result.request_id` set (a
+   completion this job produced) and `spent_usd` **non-null and > 0 — the
+   first time in jobs-mcp's history** — equal to the gateway's own figure,
+   `GET http://gateway/ledger/jobs/<id>?caller=n8n-executor` read with the
+   operator token (the operator may read the executor's jobs because its
    projects cover the executor's).
 3. **The negative proof:** the same with `budget_cap: 0` → `failed`
-   (`retries_exhausted` after 2 attempts) with `E_BUDGET_EXCEEDED` in
-   `error.message`, `/ledger/jobs/<id>?caller=n8n-executor` answering 404 (no
-   rows), and $0 spent.
+   (`retries_exhausted` after 3 attempts, each refused at $0) with
+   `E_BUDGET_EXCEEDED` and `scope=job` in `error.message`, and
+   `/ledger/jobs/<id>?caller=n8n-executor` answering 404.
 4. `knowledge-reingest` and `smoke-heartbeat` are untouched: one
    `smoke-heartbeat` enqueue still succeeds.
+
+A job that ends `failed` may still have spent — an attempt was charged, then
+a retry refused to claim it. jobs-mcp records `spent_usd` only on success, so
+for a failed job the gateway's `/ledger/jobs/<id>?caller=n8n-executor` is the
+record.
