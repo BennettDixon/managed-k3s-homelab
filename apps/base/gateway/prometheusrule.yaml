@@ -1,0 +1,271 @@
+# Alerts per spec §9. Delivery: Alertmanager -> n8n webhook receiver -> the
+# operator's terminal channel (docs/runbooks/alerts.md); `severity: critical`
+# is a label until the notifications lane splits routes — everything rides
+# one Telegram route today. Money rules use counters only, so a Recreate
+# never zeroes a gauge mid-alert. Exactly two rules are meant to wake the
+# operator (the metered brake and the spend-rate anomaly); everything else
+# waits for morning. Which is which, and what to do: docs/runbooks/gateway.md.
+#
+# Deliberately NO node-filesystem alert here: under local-path the
+# kubelet_volume_stats series report the NODE root filesystem and jobs-mcp's
+# JobsPvcDiskFilling already owns that signal. Service-emitted
+# gateway_db_bytes is this service's share.
+#
+# GatewaySubscriptionCooling (spec §9) is NOT shipped: the pod emits no
+# subscription-lane series in v1, and a rule describing a lane the running
+# pod does not have is the jobs-mcp #16 lesson (a rule whose text described
+# a probe the pod lacked). It ships with the deferred lane's own PR.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gateway
+  namespace: gateway
+  labels:
+    # Without this label the default-valued kube-prometheus-stack silently
+    # ignores the rule — same trap as the ServiceMonitor (spec §9).
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: gateway.rules
+      rules:
+        - alert: GatewayMetricsAbsent
+          # Instant-vector alerts silently disarm when the series vanishes
+          # (Deployment gone/scaled to 0, Service label drift, monitor
+          # release-label lost). This guard fires precisely then; TargetDown
+          # covers scrape-failing, this covers target-gone. for: 10m absorbs
+          # Recreate-deploy staleness. While this fires, every money rule
+          # below is blind — treat it as a money alert.
+          expr: absent(gateway_db_bytes{namespace="gateway"})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "gateway metrics have vanished from Prometheus"
+            description: >-
+              No gateway_db_bytes series exists: the gateway scrape target is
+              gone (not merely failing — TargetDown covers that). Check the
+              Deployment, the Service's app label, and the ServiceMonitor's
+              release label. While this fires, every other gateway alert —
+              including the two money pages — is blind.
+        - alert: GatewayMeteredBrakeTripped
+          # One of the two 3 am pages (spec §5, §9): the gateway-wide daily
+          # billed ceiling (GATEWAY_METERED_DAILY_CEILING_USD) latched, so
+          # every metered request answers 402 scope=brake_metered until
+          # 00:00 UTC or an audited brake-reset. Money has STOPPED; damage
+          # is bounded by the ceiling. Never raise the ceiling to make this
+          # stop.
+          expr: gateway_brake_tripped{namespace="gateway", lane="metered"} == 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "gateway metered daily brake tripped — spending has stopped"
+            description: >-
+              The metered lane hit its daily billed ceiling and is refusing
+              every request with 402 scope=brake_metered. Something looped.
+              From any tailnet device: GET http://gateway/ledger/requests
+              with the operator token, find the caller/project/job that
+              spent it, cancel the job at jobs-mcp, THEN
+              POST /ledger/brake-reset {lane: metered, reason}. Checklist:
+              docs/runbooks/gateway.md "Brake tripped".
+        - alert: GatewaySpendRateAnomaly
+          # The other 3 am page: the half-brake early warning. More than $2
+          # billed inside one hour is not any v1 consumer's shape
+          # (gateway-smoke is capped at $1/month; the operator's own token at
+          # $5/day). The threshold is the operator's number (spec §9).
+          expr: sum(increase(gateway_billed_usd_total{namespace="gateway"}[1h])) > 2
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "gateway billed more than $2 in the last hour"
+            description: >-
+              Billed spend through the gateway exceeded $2 in one hour —
+              ahead of the $5 daily brake. Expected ONLY during the
+              deliberate workspace-limit trip. Otherwise: read
+              /ledger/requests?since= for the hour, identify the
+              caller/project, and stop it before the brake does.
+        - alert: GatewayProjectNearCap
+          # Morning: raise the cap (a registry PR a human reads) or stop the
+          # project. The cap gauge is guarded so a cap of 0 never divides.
+          expr: >-
+            gateway_project_period_spent_usd{namespace="gateway"}
+            / (gateway_project_period_cap_usd{namespace="gateway"} > 0) > 0.8
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a gateway project has spent >80% of its monthly cap"
+            description: >-
+              Project {{ $labels.project }} has committed more than 80% of
+              its period cap (billed basis, in-flight reservations included).
+              At 100% every request for it answers 402 scope=project_period
+              until the next UTC month. Raise cap_usd in
+              apps/base/gateway/registry.yaml (Σ caps must stay under the
+              attested workspace limit) or let it stop.
+        - alert: GatewayFallbackSpend
+          # $0 calls became dollars — with the project's bit AND the
+          # request's header (spec §6.3). Inert until the deferred
+          # subscription lane exists (metered-only v1 has nothing to fall
+          # back FROM); kept because the counter is emitted from boot and a
+          # non-zero increase in v1 would itself be a bug worth a morning.
+          expr: sum(increase(gateway_fallback_total{namespace="gateway"}[1h])) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a gateway request fell back from the subscription lane to metered"
+            description: >-
+              A request that opted in (X-Gateway-Fallback: metered on a
+              fallback_allowed project) was served metered because the
+              subscription lane was unavailable. Each such request is a row
+              with fallback=1 in /ledger/requests. In metered-only v1 this
+              firing at all is a bug.
+        - alert: GatewaySweptSpend
+          # Reservations charged blind at boot (spec §1): a previous process
+          # died between reserve and settle — power cut, OOM, a Recreate
+          # mid-call — and the orphan was settled AT its reservation. Over-
+          # counting is the safe direction; reconcile against the Console.
+          # NOT increase(): the sweep increments the counter BEFORE the
+          # listener opens, i.e. before the new pod's series has a first
+          # sample, and Prometheus never credits a series' first value — an
+          # increase() form can never fire for a boot sweep (slice-2 review).
+          # The plain comparison fires for the life of the pod that swept and
+          # resolves at the next clean boot: the reconcile is the ack.
+          expr: gateway_swept_usd_total{namespace="gateway"} > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "the gateway swept orphaned reservations at boot"
+            description: >-
+              The boot sweep settled reserved rows (state=swept) at their
+              full reservation after an unclean stop. Spend is over-counted
+              by at most one worst case per row — check /ledger/requests for
+              rows with error_code E_SWEPT and reconcile against the Console
+              at the monthly line (docs/runbooks/gateway.md "Monthly
+              reconcile"). Repeated firings without a known restart = a
+              crash loop worth reading kubectl logs for.
+        - alert: GatewayScopeExhausted
+          # As-built addition (slice-2 review): the operator's per-caller
+          # daily ceiling ($5, registry max_day_billed_usd) equals the
+          # metered brake ($5), and the enforcement order is job ->
+          # caller_day -> project -> brake, so operator traffic is refused
+          # at scope=caller_day BEFORE the brake can latch, and the n8n
+          # executor is bounded at $1/month — in v1 the brake page is
+          # unreachable and a looping workbench token that stays under $2/h
+          # would burn $5/day with no alert. This is that alert: a
+          # caller-day or project-period refusal in the last hour. Refusals
+          # increment at request time, so increase() sees them.
+          expr: increase(gateway_refusals_total{namespace="gateway", scope=~"caller_day|project_period"}[1h]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a gateway caller or project hit its daily / monthly ceiling"
+            description: >-
+              At least one request was refused with 402 scope={{ $labels.scope }}
+              in the last hour: a caller reached its max_day_billed_usd or a
+              project its cap_usd. Money has stopped for that scope until
+              00:00 UTC / the next month. Read /ledger/requests for the
+              scope, find what spent it; a legitimate need is a registry PR,
+              a loop is a caller to stop.
+        - alert: GatewaySettleOverReserve
+          # The reservation invariant slipped (spec §5): a provider reported
+          # more than the worst case the ledger reserved. Settled at actual,
+          # counted here; the fix is a larger count_tokens margin, never a
+          # silent clamp.
+          expr: increase(gateway_settle_over_reserve_total{namespace="gateway"}[1h]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a gateway request settled above its reservation"
+            description: >-
+              settled_micro exceeded reserved_micro on at least one row, so a
+              cap could in principle be overshot by the difference. Compare
+              the row's token counts with what count_tokens estimated
+              (/ledger/requests) and raise the 5% margin or the +32 floor in
+              services/gateway if it recurs; a US-pinned workspace needs
+              BILLED_PRICE_MULTIPLIER_PCT=110 (spec §5).
+        - alert: GatewayLaneDown
+          # Morning: the API unreachable from the pod, three consecutive
+          # provider 5xx, or the Console/workspace spend limit reached
+          # (503 E_LANE_UNAVAILABLE until the resume time, re-probed hourly).
+          # 30m absorbs a short provider incident.
+          expr: gateway_lane_up{namespace="gateway"} == 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a gateway lane has been down for 30 minutes"
+            description: >-
+              Lane {{ $labels.lane }} is refusing requests with 503
+              E_LANE_UNAVAILABLE (no reservation, no spend). Causes, in
+              order: the Console workspace spend limit reached (the
+              deliberate trip, or real exhaustion — /ledger/lanes shows
+              cooling_until), the API unreachable from the compute site,
+              three consecutive provider 5xx in 5 min. kubectl logs show
+              evt=lane_down with the reason.
+        - alert: GatewayLaneAuthFailed
+          # The metered key was revoked or rotated with skew (spec §7.4):
+          # the idle probe fails within 5 minutes without spending.
+          expr: gateway_lane_auth_ok{namespace="gateway"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a gateway lane's credential is rejected by the provider"
+            description: >-
+              The provider answered 401/403 (not billing_error) on lane
+              {{ $labels.lane }}. For metered: the Anthropic key in
+              k3s_gateway_anthropic_api_key was revoked, or a rotation left
+              the pod on the old value — rotation order in
+              docs/runbooks/gateway.md "Rotation": tfvars -> targeted apply
+              -> ESO force-sync -> pod delete -> delete the old key.
+        - alert: GatewayReservationStuck
+          # A reserved row older than an hour cannot be a live request (the
+          # server timeout is 600 s): the sweep or the settle path has a
+          # bug. A pod restart sweeps it.
+          expr: gateway_reservation_oldest_age_seconds{namespace="gateway"} > 3600
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a gateway reservation has been open for over an hour"
+            description: >-
+              The oldest reserved row is older than any request can be. Its
+              money is held against every cap until it settles. Read
+              /ledger/requests (state=reserved), then delete the pod
+              (Recreate): the boot sweep settles it at the reservation and
+              GatewaySweptSpend records it. Recurrence = a bug in
+              services/gateway.
+        - alert: GatewayDbOversized
+          expr: gateway_db_bytes{namespace="gateway"} > 0.8 * 1073741824
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "gateway.db exceeds 80% of the PVC's nominal 1Gi"
+            description: >-
+              local-path never enforces the 1Gi claim, so the ledger crossing
+              ~820MB means ~2M rows (~400 B each; 1,000 requests/day is
+              ~150 MB/year). Rows are kept indefinitely by design (spec §9.3)
+              and pruning is an explicit destructive HUMAN task, never a
+              sweep — this alert is the prompt to schedule one. A full node
+              disk fails reservations closed (503, no spend).
+        - alert: GatewayPriceTableStale
+          # 90 days: list costs drift from the invoice. The fix is a registry
+          # PR updating the prices and prices_as_of (the operator's
+          # attestation), checked at the monthly reconcile.
+          expr: gateway_price_table_age_seconds{namespace="gateway"} > 7776000
+          for: 24h
+          labels:
+            severity: warning
+          annotations:
+            summary: "the gateway price table is more than 90 days old"
+            description: >-
+              prices_as_of in apps/base/gateway/registry.yaml is older than
+              90 days. Reservations and list costs may no longer match the
+              provider's rates; reconcile Σ billed against the Console and
+              update the models block + prices_as_of in a registry PR.

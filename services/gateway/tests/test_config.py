@@ -12,8 +12,9 @@ def test_parse_caller_tokens_rejects_non_json_arrays_short_tokens_bad_ids_empty(
         parse_caller_tokens("not json")
     with pytest.raises(ConfigError, match="object"):
         parse_caller_tokens('["a"]')
-    with pytest.raises(ConfigError, match="16 chars"):
-        parse_caller_tokens('{"operator": "short"}')
+    with pytest.raises(ConfigError, match="16 chars") as short:
+        parse_caller_tokens('{"swapped-token-value": "short"}')
+    assert "swapped-token-value" not in str(short.value)  # a key/value swap must not echo the key
     with pytest.raises(ConfigError, match="identifier"):
         parse_caller_tokens('{"Bad Id!": "0123456789abcdef"}')
     with pytest.raises(ConfigError, match="no callers"):

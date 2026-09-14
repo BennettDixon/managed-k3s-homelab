@@ -56,7 +56,8 @@ _Last updated: 2026-09-10_
   gateway's code, tests and CI (`services/gateway/`, the first Python service
   of the house; `.github/workflows/gateway.yml` with the version-bump guard).
   Nothing runs on the cluster until slice 2 lands the manifests behind the
-  spec §8 MERGE GATE. Spec `docs/specs/gateway.md` (as-built deltas at the
+  spec §8 MERGE GATE. **Slice 2 = PR #24 (opened 2026-09-10), draft behind
+  its gate — reviewed, CI green, nothing on the cluster; image tag 0.1.1.** Spec `docs/specs/gateway.md` (as-built deltas at the
   top); source `services/gateway/` (README carries the verify line;
   `uv run gateway-smoke-local` proves the ledger against a stub upstream).
 - **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS),
@@ -421,7 +422,8 @@ and the one remaining gate step are the operator's:
 
 - **Gateway slice 2 — secrets, Harbor, manifests, runbook, first live call**
   (spec §7, §8 MERGE GATE, §13, §14). Slice 1 is merged (PR #22) and deployed
-  nowhere. The order is load-bearing, one reconciliation-chain change per
+  nowhere. **PR #24 is open (draft) with all of it, three-lens reviewed; the
+  MERGE GATE steps below are the operator's, in `docs/runbooks/gateway.md`.** The order is load-bearing, one reconciliation-chain change per
   window: (1) ESO reader identity — done 2026-09-09; (2) OPERATOR: Console
   workspace `homelab-gateway` with a monthly spend limit set BEFORE the key
   is minted (set it to $1 first for the deliberate trip, raise afterwards),
@@ -431,11 +433,11 @@ and the one remaining gate step are the operator's:
   **6 add / 1 change / 0 destroy** (the policy changes in place; anything to
   destroy means STOP), one SSO login for the whole build; (4) OPERATOR:
   Harbor project `gateway` + pull robot (secret into tfvars) + the image
-  pushed from the `desktop-linux` builder at the manifest's tag (`0.1.0`);
+  pushed from the `desktop-linux` builder at the manifest's tag (`0.1.1` — moved by the slice-2 review);
   (5) `apps/base/gateway/registry.yaml` from
   `services/gateway/registry.example.yaml` with the operator's caps, passing
   CI incl. Σ caps ≤ the attested workspace limit; (6) no tailnet node named
-  `gateway`; (7) merge, watch Flux, verify on the cluster (pod on 0.1.0,
+  `gateway`; (7) merge, watch Flux, verify on the cluster (pod on 0.1.1,
   both ExternalSecrets synced, `/readyz` 200 over the tailnet, the §9 rules
   loaded). Then the first live operator call from the workbench: `haiku`,
   `max_tokens: 5`, cap `0.01` ⇒ `X-Gateway-Lane-Used: metered`, non-zero

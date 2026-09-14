@@ -29,3 +29,11 @@ knowledge_mcp_operator_token=""
 knowledge_mcp_n8n_reingest_token=""
 knowledge_harbor_docker_pull_username=""
 knowledge_harbor_docker_pull_password=""
+# gateway: two generated caller tokens -> one SM JSON map (the n8n-executor value also goes in the
+# n8n LXC env as GATEWAY_EXECUTOR_TOKEN at slice 3); the Anthropic key from the Console workspace
+# homelab-gateway (spend limit set BEFORE minting); Harbor robot for the gateway project
+gateway_operator_token=""
+gateway_n8n_executor_token=""
+gateway_anthropic_api_key=""
+gateway_harbor_docker_pull_username=""
+gateway_harbor_docker_pull_password=""

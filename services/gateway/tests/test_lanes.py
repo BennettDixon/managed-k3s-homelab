@@ -65,6 +65,29 @@ def test_auth_failure_and_spend_limit() -> None:
     assert lane.status().cooling_until == 2_000 + 3_600_000
 
 
+def test_probe_never_clears_a_spend_limit_cooldown() -> None:
+    # Slice-2 review: models.list() is not gated by a workspace spend limit, so
+    # a passing probe must not flap the lane up (that would silence
+    # GatewayLaneDown and make the runbook's $1 trip unprovable).
+    lane = make_lane()
+    lane.record_spend_limit(1_000, resume_at=61_000)
+    lane.probe_ok(2_000)
+    assert lane.status().up is False
+    assert lane.status().cooling_until == 61_000
+    assert lane.status().last_ok == 2_000
+    assert lane.check(2_000) == (False, 59)
+    # A rotated key during the cooldown: the probe still proves auth.
+    lane.record_auth_failure(3_000)
+    lane.probe_ok(4_000)
+    assert lane.status().auth_ok is True and lane.status().up is False
+    # Past the resume time the lane is half-open; only a real success clears cooling.
+    assert lane.check(61_000) == (True, 0)
+    lane.probe_ok(61_500)
+    assert lane.status().cooling_until == 61_000 and lane.status().up is False
+    lane.record_success(62_000)
+    assert lane.status().up is True and lane.status().cooling_until is None
+
+
 def test_probe_transitions() -> None:
     lane = make_lane()
     lane.probe_failed(0, "rate_limited")

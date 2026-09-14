@@ -51,10 +51,15 @@ public repo) map one-for-one to the live ExternalSecrets:
 | `k3s_tailscale_oauth` | `tailscale_oauth_secret` | tailscale |
 | `recaptcha_personal_site_keys` | `personal_site_recaptcha_secret` | personal-site |
 | `contact_me_gmail_account_details` | `contact_me_gmail_account_details_secret` | personal-site |
+| `k3s_gateway_caller_tokens` (added 2026-09-10, gateway slice 2) | `gateway_caller_tokens_secret` | gateway |
+| `k3s_gateway_anthropic_api_key` (added 2026-09-10) | `gateway_anthropic_api_key_secret` | gateway |
+| `k3s_harbor_docker_pull_gateway` (added 2026-09-10) | `gateway_harbor_docker_pull_secret` | gateway |
 
 If a future ExternalSecret reads a new SM key, add that module's `.secret_arn`
 to the policy `Resource` list in `terraform/iam-external-secrets.tf` — otherwise
-ESO gets AccessDenied for it. If ESO ever gains a `PushSecret`, add
+ESO gets AccessDenied for it. Doing so changes the policy document IN PLACE:
+the targeted plan for such a PR shows N add / **1 change** / 0 destroy (first
+seen with the three gateway entries, 2026-09-10 — `docs/runbooks/gateway.md`). If ESO ever gains a `PushSecret`, add
 `secretsmanager:PutSecretValue` (and re-scope) at that time.
 
 ## MERGE GATE — this PR is safe to merge; the CUTOVER is not automatic

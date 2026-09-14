@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: gateway
+  labels:
+    # The ServiceMonitor selects Services by this label — without it the
+    # monitor matches nothing and Prometheus silently never scrapes us
+    # (spec §9: the thrice-hit trap).
+    app: gateway
+  annotations:
+    # Tailnet-only exposure (spec §2): clients set
+    # OPENAI_BASE_URL=http://gateway/v1 and OPENAI_API_KEY=<caller token>.
+    # No tailnet node named `gateway` may exist beforehand — MagicDNS would
+    # silently mint gateway-1 (MERGE GATE step 6).
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: "gateway"
+spec:
+  selector:
+    app: gateway
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http
+  type: ClusterIP

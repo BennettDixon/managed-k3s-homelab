@@ -216,3 +216,35 @@ variable "knowledge_harbor_docker_pull_password" {
   type        = string
   sensitive   = true
 }
+
+# gateway secret values (never committed; set in terraform.tfvars).
+# Onboarding + rotation: docs/runbooks/gateway.md; spec docs/specs/gateway.md §7.
+variable "gateway_operator_token" {
+  description = "gateway caller token for the operator class (the operator's workbench env); openssl rand -hex 32, must differ from every other caller's value"
+  type        = string
+  sensitive   = true
+}
+
+variable "gateway_n8n_executor_token" {
+  description = "gateway caller token for the n8n executor (executor class, gateway-smoke project only); same value lives in the n8n LXC env as GATEWAY_EXECUTOR_TOKEN from slice 3"
+  type        = string
+  sensitive   = true
+}
+
+variable "gateway_anthropic_api_key" {
+  description = "Anthropic API key minted in the Console workspace homelab-gateway AFTER its monthly spend limit is set (spec §7.3); the gateway pod is its only in-cluster holder"
+  type        = string
+  sensitive   = true
+}
+
+variable "gateway_harbor_docker_pull_username" {
+  description = "Full Harbor robot name for gateway project pulls (robot$gateway+gateway-pull)"
+  type        = string
+  sensitive   = true
+}
+
+variable "gateway_harbor_docker_pull_password" {
+  description = "Harbor robot secret for gateway project pulls"
+  type        = string
+  sensitive   = true
+}

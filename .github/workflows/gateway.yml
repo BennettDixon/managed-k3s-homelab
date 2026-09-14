@@ -11,12 +11,16 @@ on:
     branches: [main]
     paths:
       - "services/gateway/**"
-      - "apps/base/gateway/registry.yaml"
+      # The whole base, not only registry.yaml: the manifest tests also read
+      # deployment.yaml (MAX_REQUEST_CAP_USD, paths, tag, probes) and scan
+      # every shipped YAML for `${` — a tag-bump or env-edit PR is exactly
+      # the deploy path and must run them (slice-2 review).
+      - "apps/base/gateway/**"
       - ".github/workflows/gateway.yml"
   pull_request:
     paths:
       - "services/gateway/**"
-      - "apps/base/gateway/registry.yaml"
+      - "apps/base/gateway/**"
       - ".github/workflows/gateway.yml"
 
 jobs:
