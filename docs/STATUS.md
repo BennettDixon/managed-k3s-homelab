@@ -340,7 +340,11 @@ house adversarial review, then merge:
   `E_LANE_UNAVAILABLE` with the reservation released at $0 and took the lane
   down for an hour. `count_tokens` is gated too; `models.list()` is not — an
   idle probe succeeded while limited and, thanks to 0.1.1, left the lane down.
-  Proof spend: $1.2010.
+  Proof spend: $1.2010. `GatewayLaneDown` fired at 14:27:03Z, 30 minutes after
+  the lane went down, and reached Telegram with its description rendered as
+  "Lane metered …" — the first `{{ $labels.* }}` annotation in this repo's
+  rules, so Flux's postBuild substitution provably leaves Go templates alone;
+  Alertmanager logged no delivery errors.
 - **Limit raise and recovery:** PENDING.
 
 ## Parked (deliberate, not forgotten)

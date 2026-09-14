@@ -171,6 +171,8 @@ deploy that interrupted a call; reconcile at the monthly line.
    as `docs/runbooks/alerts.md` does). The first `Gateway*` alert that
    fires must render its `{{ $labels.* }}` annotation — the first Go-template
    braces in this repo's rules; Flux postBuild substitutes `${…}` only.
+   **Proven 2026-09-14:** `GatewayLaneDown` reached Telegram with
+   "Lane metered …" rendered and no braces left.
 4. **§13 check 2 — `count_tokens` latency from the compute site** (needs the
    key, so it runs here, inside the pod, never from a worker — a one-time
    measurement, never a money question; `kubectl exec` stays out of every
