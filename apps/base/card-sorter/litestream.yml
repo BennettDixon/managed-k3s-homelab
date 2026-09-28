@@ -1,6 +1,7 @@
 # The inventory pod's Litestream sidecar (inventory spec §1b): the one file
 # in the project that cannot be regenerated gets a continuous point-in-time
-# replica on the bulk NAS, over SFTP by the tailnet name (never a LAN IP).
+# replica on the bulk NAS, over SFTP through the operator's egress proxy
+# (never a LAN IP, never a committed ts.net name).
 # The NAS user is `litestrm` (TrueNAS capped the name) and its home is a
 # directory inside the litestream dataset, which the user owns; the private
 # key comes from the secret card-sorter-litestream, mounted at /ssh. The
@@ -10,7 +11,10 @@ dbs:
   - path: /data/inventory.db
     replicas:
       - type: sftp
-        host: truenas-bulk-52tb:22
+        # `nas` is the egress Service beside this pod (egress-nas.yaml): the
+        # tailscale operator's proxy to truenas-bulk-52tb. Pods cannot resolve
+        # the tailnet name themselves.
+        host: nas.card-sorter.svc.cluster.local:22
         user: litestrm
         key-path: /ssh/id_ed25519
         path: /mnt/BulkPoolZ2/artifacts/card-sorter/litestream/litestrm/inventory

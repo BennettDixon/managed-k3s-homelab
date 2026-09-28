@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nas
+  namespace: card-sorter
+  annotations:
+    # The Litestream sidecar's way to the bulk NAS (inventory spec §1b). Pods
+    # cannot resolve tailnet MagicDNS names (cluster DNS knows nothing of
+    # them: the first deploy crash-looped on "lookup truenas-bulk-52tb: no
+    # such host"), so the tailscale operator rewires this ExternalName to an
+    # egress proxy reaching the NAS node, the jobs-mcp -> n8n pattern. The
+    # ts.net FQDN is NEVER committed: Flux substitutes it from the on-cluster
+    # `cluster-vars` secret in flux-system (key NAS_TAILNET_FQDN, added out
+    # of band like N8N_TAILNET_FQDN; docs/runbooks/card-sorter.md). The NAS
+    # must accept the proxy: ACL `tag:k8s -> truenas-bulk-52tb:22`.
+    tailscale.com/tailnet-fqdn: "${NAS_TAILNET_FQDN}"
+    # IfNotPresent: Flux creates the Service once, then leaves it alone; the
+    # operator owns spec.externalName after creation and plain SSA would
+    # revert it every reconcile. To change annotations here: delete the
+    # Service and let Flux recreate it.
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
+spec:
+  type: ExternalName
+  externalName: placeholder.card-sorter.svc.cluster.local
