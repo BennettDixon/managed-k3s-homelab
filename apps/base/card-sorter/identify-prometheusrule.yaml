@@ -1,0 +1,49 @@
+# Alerts per identify spec §8: nothing pages; a stale catalogue or an
+# unmounted mirror blocks scan jobs, which the agent reports as blocked, and
+# SorterNeedsHuman is the page for that. What to do: docs/runbooks/card-sorter.md.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: identify
+  namespace: card-sorter
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: identify.rules
+      rules:
+        - alert: IdentifyMetricsAbsent
+          expr: absent(identify_catalog_printings{namespace="card-sorter"})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "identify metrics have vanished from Prometheus"
+            description: >-
+              No identify_catalog_printings series: the scrape target is gone.
+              Check the Deployment, the Service's app label and the
+              ServiceMonitor's release label.
+        - alert: IdentifyCatalogStale
+          # the mirror's newest bulk snapshot is older than 21 days: the weekly
+          # CronJobs have not run, or Scryfall has been unreachable for weeks
+          expr: identify_catalog_age_seconds{namespace="card-sorter"} > 21 * 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "identify's catalogue is more than 21 days old"
+            description: >-
+              readyz answers 503 E_CATALOG_STALE and scan jobs block. Check the
+              scryfall-mirror and catalog-refresh CronJobs' last runs
+              (kubectl -n card-sorter get cronjob,job) and the mirror's log.
+        - alert: IdentifyMirrorUnmounted
+          expr: identify_mirror_mounted{namespace="card-sorter"} == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "identify cannot read the Scryfall mirror"
+            description: >-
+              The mirror's manifest.json is not readable from the pod: the NFS
+              volume from the NAS is gone or the export changed. The text
+              stages still answer, the art stage cannot, so scan jobs block.

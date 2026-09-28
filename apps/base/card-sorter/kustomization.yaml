@@ -17,16 +17,19 @@ resources:
   - card-sorter-caller-tokens.yaml
   - card-sorter-litestream.yaml
   - card-sorter-registry-harbor-docker-login.yaml
-  # PR 2: identify, once its MERGE GATE holds (the NFS export mounted by the
-  # node, the mirror complete, the image pushed): uncomment together.
-  # - identify-deployment.yaml
-  # - identify-service.yaml
-  # - identify-pvc.yaml
-  # - scryfall-mirror-pv.yaml
-  # - scryfall-mirror-pvc.yaml
-  # - scryfall-mirror-cronjob.yaml
-  # - identify-cronjob.yaml
-  # - card-sorter-identify-token.yaml
+  # PR 2: identify (identify spec §7), the seat photo -> printing service, with
+  # the Scryfall mirror on the NAS as the cluster's first NFS-backed volume.
+  - identify-deployment.yaml
+  - identify-service.yaml
+  - identify-pvc.yaml
+  - scryfall-mirror-pv.yaml
+  - scryfall-mirror-pvc.yaml
+  - scryfall-mirror-cronjob.yaml
+  - identify-cronjob.yaml
+  - card-sorter-identify-token.yaml
+  - card-sorter-inventory-token.yaml
+  - identify-servicemonitor.yaml
+  - identify-prometheusrule.yaml
 configMapGenerator:
   # Hash-suffixed: a caller-registry change rolls the Recreate Deployment
   # (the map is read at boot); a ConfigMap updated in place would go stale.

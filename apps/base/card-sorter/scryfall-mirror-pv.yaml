@@ -3,8 +3,15 @@
 # nfs: spec so that no storage class has to be decided yet (the homelab's
 # deferred build-order item 1 meeting its first consumer). The export is an
 # operator step on the NAS (appliance tier): dataset
-# BulkPoolZ2/artifacts/card-sorter, exported to the compute network, root
-# mapped to root, and the k3s node must resolve the tailnet name.
+# BulkPoolZ2/artifacts/card-sorter exported to the compute network, root
+# mapped to root, AND its child dataset scryfall listed as a second path on
+# the same share, because a FreeBSD export does not cross into a child
+# dataset (found 2026-09-28: "access denied by server"). The server is the
+# NAS's LAN address, never committed: the kubelet, not a pod, performs this
+# mount, and the node does not resolve tailnet names (also found 2026-09-28,
+# a mount by name never reached the server), so the operator egress Service
+# that the Litestream sidecar uses cannot help here. Flux substitutes
+# NAS_LAN_IP from the cluster-vars secret, like the phyt volumes' address.
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -20,7 +27,7 @@ spec:
     - nfsvers=4
     - noatime
   nfs:
-    server: truenas-bulk-52tb
+    server: "${NAS_LAN_IP}"
     path: /mnt/BulkPoolZ2/artifacts/card-sorter/scryfall
   claimRef:
     namespace: card-sorter

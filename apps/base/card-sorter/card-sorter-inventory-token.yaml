@@ -1,0 +1,21 @@
+# inventory's own token, one entry of the same caller map, so it can post
+# pending cards' images to identify after a catalogue refresh (inventory
+# spec §4; machine class on identify's side).
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: card-sorter-inventory-token
+  namespace: card-sorter
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: card-sorter-inventory-token
+    creationPolicy: Owner
+  data:
+    - secretKey: token
+      remoteRef:
+        key: k3s_card_sorter_caller_tokens
+        property: inventory

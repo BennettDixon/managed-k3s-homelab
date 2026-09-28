@@ -269,6 +269,12 @@ variable "card_sorter_identify_token" {
   sensitive   = true
 }
 
+variable "card_sorter_inventory_token" {
+  description = "card-sorter caller token for the inventory service (machine class on identify's side), used only to post pending cards' images to identify after a catalogue refresh"
+  type        = string
+  sensitive   = true
+}
+
 variable "card_sorter_litestream_private_key" {
   description = "OpenSSH private key (the whole PEM, newlines included) of the NAS user litestrm; its public key is the only entry in that user's authorized_keys"
   type        = string

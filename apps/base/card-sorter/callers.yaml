@@ -11,4 +11,6 @@ callers:
   bennett:
     class: operator      # the workbench and the phone
   identify:
-    class: machine       # PR 2: POST /catalog/refreshed after a catalogue rebuild; no token in the map until then
+    class: machine       # POST /catalog/refreshed to inventory after a catalogue rebuild
+  inventory:
+    class: machine       # POST /identify to identify for the pending-card retry
