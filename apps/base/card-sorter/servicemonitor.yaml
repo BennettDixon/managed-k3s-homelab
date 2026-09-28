@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: card-sorter
+  namespace: card-sorter
+  labels:
+    # Without this label the default-valued kube-prometheus-stack silently
+    # ignores the monitor (the thrice-hit trap).
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: inventory
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+    # The Litestream sidecar (inventory spec §1b).
+    - port: metrics
+      path: /metrics
+      interval: 30s

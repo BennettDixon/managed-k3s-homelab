@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: identify-data
+  namespace: card-sorter
+spec:
+  # A cache (identify spec §1): the catalogue SQLite and the hash index,
+  # rebuilt from the mirror by `identify refresh` in about an hour. Losing
+  # it costs a refresh, nothing else. 4 Gi for ~90k printings with hashes.
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 4Gi

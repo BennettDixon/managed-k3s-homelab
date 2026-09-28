@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: scryfall-mirror
+  namespace: card-sorter
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: scryfall-mirror
+  resources:
+    requests:
+      storage: 200Gi

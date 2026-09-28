@@ -59,7 +59,12 @@ resource "aws_iam_policy" "external_secrets_reader" {
           # modules — the first dollar-spending credential on this path).
           module.gateway_caller_tokens_secret.secret_arn,
           module.gateway_anthropic_api_key_secret.secret_arn,
-          module.gateway_harbor_docker_pull_secret.secret_arn
+          module.gateway_harbor_docker_pull_secret.secret_arn,
+          # card-sorter (inventory spec §6): the caller map, the Litestream
+          # SFTP key and the pull robot.
+          module.card_sorter_caller_tokens_secret.secret_arn,
+          module.card_sorter_litestream_sftp_secret.secret_arn,
+          module.card_sorter_harbor_docker_pull_secret.secret_arn
         ]
       }
     ]
