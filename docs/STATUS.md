@@ -75,9 +75,12 @@ _Last updated: 2026-09-28_
   photo → a printing against a Scryfall mirror on the NAS — the first NFS-backed
   volume, a static PV). Namespace `card-sorter`, `apps/base/card-sorter/`,
   three SM entries in `terraform/`, runbook `docs/runbooks/card-sorter.md`.
-  Nothing merged: inventory's PR waits on the Harbor project, the NAS datasets,
-  export and `litestream` user, and the targeted apply; identify's on the full
-  mirror and its eval. Specs and services live in the private card-sorter repo.
+  **inventory LIVE (2026-09-28, PRs #27, #28):** `http://inventory/` answers the
+  machine's Pi over the tailnet; the sidecar ships to the NAS through an operator
+  egress Service, since pods cannot resolve tailnet names. identify's PR follows
+  with the NFS volume by the NAS's address from `cluster-vars` (the node does not
+  resolve tailnet names either) and its eval deferred until the imaging head
+  exists. Specs and services live in the private card-sorter repo.
 - **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM internals,
   storage pools, Tailscale ACLs.
 

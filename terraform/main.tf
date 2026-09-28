@@ -267,7 +267,7 @@ module "gateway_harbor_docker_pull_secret" {
 module "card_sorter_caller_tokens_secret" {
   source      = "./modules/secrets_manager"
   secret_name = "k3s_card_sorter_caller_tokens"
-  description = "card-sorter caller-token JSON map (caller_id -> token) for inventory and identify; class per caller lives in apps/base/card-sorter/callers.yaml. Out-of-band holders: the sorter-01 value in /etc/sorter-agent/token on the machine's Pi; the bennett value in the operator workbench env as INVENTORY_TOKEN; the identify value only in the identify pod (PR 2)"
+  description = "card-sorter caller-token JSON map (caller_id -> token) for inventory and identify; class per caller lives in apps/base/card-sorter/callers.yaml. Out-of-band holders: the sorter-01 value in /etc/sorter-agent/token on the machine's Pi; the bennett value in the operator workbench env as INVENTORY_TOKEN; the identify value only in the identify pod, the inventory value only in the inventory pod (each calls the other, PR 2)"
   # The WHOLE value is the map: inventory and identify read it with no
   # `property` (house auth shape); identify's own entry is also read by
   # property for its calls back to inventory. Adding a caller = one more
@@ -276,6 +276,7 @@ module "card_sorter_caller_tokens_secret" {
     "sorter-01" = var.card_sorter_sorter01_token
     bennett     = var.card_sorter_operator_token
     identify    = var.card_sorter_identify_token
+    inventory   = var.card_sorter_inventory_token
   })
 }
 

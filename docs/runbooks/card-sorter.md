@@ -48,7 +48,16 @@ The apps chain uses `wait: true` + `dependsOn`, so ONE unready object (an Extern
 
 ## MERGE GATE (PR 2 — identify)
 
-Everything above, and: the NFS export mounted by the node (`showmount` from `k3s`); the full English mirror on the NAS (the first run took a day and a half from the workbench on 2026-09-28; rsync it into `scryfall/`, then `identify verify --sample 500` against it); the identify image pushed at its tag; `card_sorter_identify_token` in the SM map (it is in the same terraform module, so PR 1's apply already put it there); the eval gate of identify spec §5 passed and its report committed in the card-sorter repo. Then uncomment the seven identify lines in `apps/base/card-sorter/kustomization.yaml` in one PR. The first boot's init container builds the catalogue from the mirror (about an hour), during which the `apps` Kustomization is NotReady on purpose: schedule it, and tell nobody to merge anything else in that hour.
+Everything above, and, in order:
+
+1. **The NFS export covers the child dataset.** A FreeBSD export of `card-sorter` does not cross into `card-sorter/scryfall`, its own dataset: the first mount answered "access denied by server" (2026-09-28). The share entry lists both paths, `/mnt/BulkPoolZ2/artifacts/card-sorter` and `/mnt/BulkPoolZ2/artifacts/card-sorter/scryfall` (UI: Sharing → NFS → edit → Add path; or `midclt call sharing.nfs.update <id> '{"paths": [...]}'`).
+2. **The node mounts it.** The kubelet performs the mount, and the node does not resolve tailnet names (a mount by name never reached the server), so the PersistentVolume's server is `${NAS_LAN_IP}` from `cluster-vars` (added 2026-09-28; the phyt volumes use the same address). Proof: a throwaway pod in `card-sorter` with the same `nfs:` spec that lists the mount and touches a file, deleted afterwards.
+3. **The `inventory` caller in the SM map:** `card_sorter_inventory_token` in tfvars (`openssl rand -hex 32`) and a targeted apply of `module.card_sorter_caller_tokens_secret` (the version is replaced: 1 add, 1 destroy, 0 change of the secret itself); ESO force-sync; `kubectl -n card-sorter rollout restart deploy/inventory`, since the map is read at boot.
+4. **The full English mirror on the NAS**, rsynced from the workbench when its run ends (`rsync -a ~/scryfall-mirror/ root@truenas-bulk-52tb:/mnt/BulkPoolZ2/artifacts/card-sorter/scryfall/` on `agent-mini`), then `identify verify --sample 500` against it. Merging on a partial mirror is possible — the CronJob continues from the manifest — but the catalogue would lack most printings until the next Sunday.
+5. **The image pushed at the manifest's tag**, `identify:0.2.0` (done 2026-09-28: the matcher with Tesseract baked in).
+6. **The eval gate** (identify spec §5) is deliberately NOT in this gate: the labelled box and the imaging head do not exist yet. The service merges and serves; the agent's scan jobs stay off until the eval sets the threshold and the calibration, and the matcher's confidence is the uncalibrated table until `/data/calibration.json` exists.
+
+Then merge in one PR. The first boot's init container builds the catalogue from the mirror (minutes on a partial mirror, about an hour on the full one), during which the `apps` Kustomization is NotReady on purpose: schedule it, and merge nothing else in that window.
 
 ## First run after merge (verify on the cluster, never on GitHub)
 

@@ -66,8 +66,16 @@ spec:
             # stays running (the machine may be offline and journaling).
             - name: SILENT_MAX_S
               value: "300"
-            # IDENTIFY_URL / IDENTIFY_TOKEN come with PR 2: without them the
-            # pending-card retry after a catalogue refresh is inert.
+            # identify, in-cluster, for the pending-card retry after a catalogue
+            # refresh (inventory spec §4); inventory calls it as the caller
+            # `inventory` of the shared map.
+            - name: IDENTIFY_URL
+              value: http://identify.card-sorter.svc.cluster.local
+            - name: IDENTIFY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: card-sorter-inventory-token
+                  key: token
             # The WHOLE caller-token JSON map {caller_id: token} (spec §2);
             # class per caller is callers.yaml's job, never the secret's.
             - name: INVENTORY_CALLER_TOKENS
