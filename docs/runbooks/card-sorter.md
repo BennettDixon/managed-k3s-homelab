@@ -11,7 +11,8 @@ The card-sorting machine's backend on k3s: `inventory` (every tray's manifest, t
    - a user `litestrm` (TrueNAS refused the longer name) with home `/mnt/BulkPoolZ2/artifacts/card-sorter/litestream/litestrm`, the directory the UI appends inside the dataset, shell `sh`, no password, no Samba, and as its only authorized key the public half of a fresh key pair made on the workbench: `ssh-keygen -t ed25519 -f ~/.ssh/nas_litestream -N ''`. The private half goes into `terraform.tfvars` as `card_sorter_litestream_private_key` (a heredoc; the whole file, newlines included); the pair is never used for anything else.
 3. **AWS SSO login** — every plan/apply blocks on it.
 4. **The Pi on the tailnet** as a tagged node `tag:sorter` with key expiry off, and an ACL grant `tag:sorter → inventory:80, identify:80` (agent spec sign-off 2). The Pi's token (`sorter-01`) goes in `/etc/sorter-agent/token`, mode 600.
-5. **No tailnet node named `inventory` or `identify`** — checked 2026-09-28 (none); re-check at merge with `tailscale status`, because MagicDNS would silently mint `inventory-1`.
+5. **The egress path to the NAS**, found at the first deploy (2026-09-28): pods cannot resolve tailnet names, so the sidecar reaches the NAS through the operator's egress Service `nas` (`egress-nas.yaml`), which needs two out-of-band things: the key `NAS_TAILNET_FQDN` in the `cluster-vars` secret in `flux-system` (`kubectl -n flux-system patch secret cluster-vars -p '{"stringData":{"NAS_TAILNET_FQDN":"<the NAS's ts.net FQDN>"}}'`, never committed), and the ACL `tag:k8s -> truenas-bulk-52tb:22` in the admin console, since the proxy is a `tag:k8s` node and the NAS's sshd only sees it as such.
+6. **No tailnet node named `inventory` or `identify`** — checked 2026-09-28 (none); re-check at merge with `tailscale status`, because MagicDNS would silently mint `inventory-1`.
 
 ## MERGE GATE (PR 1 — inventory) — order is load-bearing
 
@@ -42,7 +43,7 @@ The apps chain uses `wait: true` + `dependsOn`, so ONE unready object (an Extern
 
    Write a few rows into `scratch.db` in another shell, stop it, then `litestream restore -o /tmp/restored.db "<the same URL>"` and compare the row counts. If the URL form refuses the key (0.5.17 ignores `key-path` in a URL), use a config file with the same fields as `apps/base/card-sorter/litestream.yml` and `-config`. **This is the rehearsed restore the spec asks for**; record it in the table at the end, then delete `scratch/` on the NAS.
 4. **`callers.yaml` parses** and names exactly the ids in the SM map (`sorter-01`, `bennett`; `identify` is listed for PR 2 and authenticates nobody until its token exists) — CI builds the base, and the service refuses to become ready on a bad registry.
-5. **No tailnet name collision** — prerequisite 5.
+5. **No tailnet name collision** — prerequisite 6; the egress path — prerequisite 5.
 6. Merge; then the "First run after merge" checks below. One reconciliation-chain change per window.
 
 ## MERGE GATE (PR 2 — identify)

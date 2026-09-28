@@ -7,6 +7,7 @@ resources:
   - inventory-deployment.yaml
   - inventory-service.yaml
   - inventory-pvc.yaml
+  - egress-nas.yaml
   - servicemonitor.yaml
   - prometheusrule.yaml
   # ExternalSecrets live in this base, NOT apps/secrets/ (jobs-mcp,
