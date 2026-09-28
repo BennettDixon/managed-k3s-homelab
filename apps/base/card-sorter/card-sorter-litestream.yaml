@@ -1,6 +1,6 @@
 # The Litestream sidecar's SFTP identity (inventory spec §1b): the private
-# key of the NAS user `litestream`, whose home is the replica dataset and
-# nothing else (appliance-tier: the user is Bennett's console step). Holders,
+# key of the NAS user `litestrm`, whose home is a directory of its own inside
+# the replica dataset and nothing else (appliance-tier: the user is Bennett's console step). Holders,
 # exhaustively: this entry and the inventory pod's /ssh mount.
 apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret

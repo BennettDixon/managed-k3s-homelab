@@ -75,7 +75,7 @@ spec:
             description: >-
               inventory applied moves in the last 10 minutes but Litestream
               wrote nothing to the replica. Check the sidecar's log for the
-              SFTP error, the NAS user litestream and its dataset.
+              SFTP error, the NAS user litestrm and its dataset.
         - alert: SorterAgentSilent
           # A job is running and the machine has said nothing for 5 minutes:
           # offline and journaling (fine, it catches up), or stuck. Morning.

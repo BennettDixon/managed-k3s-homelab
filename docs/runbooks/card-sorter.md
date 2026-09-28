@@ -8,7 +8,7 @@ The card-sorting machine's backend on k3s: `inventory` (every tray's manifest, t
 2. **NAS** (`truenas-bulk-52tb`, appliance tier), from its shell as root:
    - datasets `BulkPoolZ2/artifacts/card-sorter`, `…/card-sorter/scryfall` (the mirror, ~150 GB English) and `…/card-sorter/litestream` (the replica; a dataset of its own so a mirror prune can never touch it);
    - an NFS export of `/mnt/BulkPoolZ2/artifacts/card-sorter` to the compute network, root mapped to root, like the existing `phyt-minio` export (`midclt call sharing.nfs.create`), and `showmount -e truenas-bulk-52tb` from the **k3s node** showing it — the node must resolve the tailnet name, which is the first thing to check;
-   - a user `litestream` with home `/mnt/BulkPoolZ2/artifacts/card-sorter/litestream`, shell `/bin/sh`, no password, and as its only authorized key the public half of a fresh key pair made on the workbench: `ssh-keygen -t ed25519 -f ~/.ssh/nas_litestream -N ''`. The private half goes into `terraform.tfvars` as `card_sorter_litestream_private_key` (a heredoc; the whole file, newlines included); the pair is never used for anything else.
+   - a user `litestrm` (TrueNAS refused the longer name) with home `/mnt/BulkPoolZ2/artifacts/card-sorter/litestream/litestrm`, the directory the UI appends inside the dataset, shell `sh`, no password, no Samba, and as its only authorized key the public half of a fresh key pair made on the workbench: `ssh-keygen -t ed25519 -f ~/.ssh/nas_litestream -N ''`. The private half goes into `terraform.tfvars` as `card_sorter_litestream_private_key` (a heredoc; the whole file, newlines included); the pair is never used for anything else.
 3. **AWS SSO login** — every plan/apply blocks on it.
 4. **The Pi on the tailnet** as a tagged node `tag:sorter` with key expiry off, and an ACL grant `tag:sorter → inventory:80, identify:80` (agent spec sign-off 2). The Pi's token (`sorter-01`) goes in `/etc/sorter-agent/token`, mode 600.
 5. **No tailnet node named `inventory` or `identify`** — checked 2026-09-28 (none); re-check at merge with `tailscale status`, because MagicDNS would silently mint `inventory-1`.
@@ -37,10 +37,10 @@ The apps chain uses `wait: true` + `dependsOn`, so ONE unready object (an Extern
 3. **The NAS side** — prerequisite 2 — proven from the workbench with a scratch database before anything on the cluster depends on it:
 
    ```bash
-   litestream replicate /tmp/scratch.db "sftp://litestream@truenas-bulk-52tb:22/mnt/BulkPoolZ2/artifacts/card-sorter/litestream/scratch?key-path=$HOME/.ssh/nas_litestream"
+   litestream replicate /tmp/scratch.db "sftp://litestrm@truenas-bulk-52tb:22/mnt/BulkPoolZ2/artifacts/card-sorter/litestream/litestrm/scratch?key-path=$HOME/.ssh/nas_litestream"
    ```
 
-   Write a few rows into `scratch.db` in another shell, stop it, then `litestream restore -o /tmp/restored.db "<the same URL>"` and compare the row counts. **This is the rehearsed restore the spec asks for**; record it in the table at the end, then delete `scratch/` on the NAS.
+   Write a few rows into `scratch.db` in another shell, stop it, then `litestream restore -o /tmp/restored.db "<the same URL>"` and compare the row counts. If the URL form refuses the key (0.5.17 ignores `key-path` in a URL), use a config file with the same fields as `apps/base/card-sorter/litestream.yml` and `-config`. **This is the rehearsed restore the spec asks for**; record it in the table at the end, then delete `scratch/` on the NAS.
 4. **`callers.yaml` parses** and names exactly the ids in the SM map (`sorter-01`, `bennett`; `identify` is listed for PR 2 and authenticates nobody until its token exists) — CI builds the base, and the service refuses to become ready on a bad registry.
 5. **No tailnet name collision** — prerequisite 5.
 6. Merge; then the "First run after merge" checks below. One reconciliation-chain change per window.
@@ -102,7 +102,7 @@ When the PVC is lost, the node is rebuilt, or the file fails its boot conservati
 
 ## Rotation
 
-A caller token: tfvars → targeted apply on `module.card_sorter_caller_tokens_secret` → ESO refresh (or `force-sync`) → `kubectl -n card-sorter rollout restart deploy/inventory` (the map is read at boot) → the new value into `/etc/sorter-agent/token` on the Pi → `sudo systemctl restart sorter-agent`. The Litestream key: a new pair, the public half replaces the NAS user's authorized key, the private half through tfvars and the same targeted apply, then the pod restart. The Harbor robot: as the gateway's.
+A caller token: tfvars → targeted apply on `module.card_sorter_caller_tokens_secret` → ESO refresh (or `force-sync`) → `kubectl -n card-sorter rollout restart deploy/inventory` (the map is read at boot) → the new value into `/etc/sorter-agent/token` on the Pi → `sudo systemctl restart sorter-agent`. The Litestream key: a new pair, the public half replaces the NAS user `litestrm`'s authorized key, the private half through tfvars and the same targeted apply, then the pod restart. The Harbor robot: as the gateway's.
 
 ## Alerts — what pages vs what waits for morning
 
@@ -122,3 +122,4 @@ A caller token: tfvars → targeted apply on `module.card_sorter_caller_tokens_s
 | Date | What | Result |
 | --- | --- | --- |
 | 2026-09-28 | `litestream replicate` (0.5.17) of a scratch database to a **file** replica on the workbench, rows written, `litestream restore` to a second file, row counts compared | 4 = 4; the SFTP form waits for the NAS user (prerequisite 2) |
+| 2026-09-28 | The same over **SFTP** to the NAS user `litestrm`, with the config-file form the sidecar uses (`key-path`, the replica path under the user's home), rows written while replicating, restored from the NAS | 6 = 6; 4 files, 181 KB on the NAS; scratch removed afterwards. The URL form of `litestream replicate` ignores `key-path`, so rehearse with a config file |

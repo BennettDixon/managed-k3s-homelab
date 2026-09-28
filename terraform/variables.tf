@@ -270,7 +270,7 @@ variable "card_sorter_identify_token" {
 }
 
 variable "card_sorter_litestream_private_key" {
-  description = "OpenSSH private key (the whole PEM, newlines included) of the NAS user litestream; its public key is the only entry in that user's authorized_keys"
+  description = "OpenSSH private key (the whole PEM, newlines included) of the NAS user litestrm; its public key is the only entry in that user's authorized_keys"
   type        = string
   sensitive   = true
 }

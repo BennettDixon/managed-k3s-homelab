@@ -282,9 +282,9 @@ module "card_sorter_caller_tokens_secret" {
 module "card_sorter_litestream_sftp_secret" {
   source      = "./modules/secrets_manager"
   secret_name = "k3s_card_sorter_litestream_sftp"
-  description = "Private key of the NAS user litestream, whose home is the replica dataset BulkPoolZ2/artifacts/card-sorter/litestream and nothing else; holders: this entry and the inventory pod's /ssh mount (Litestream sidecar, inventory spec §1b)"
+  description = "Private key of the NAS user litestrm (TrueNAS caps the name), whose home is BulkPoolZ2/artifacts/card-sorter/litestream/litestrm and nothing else; holders: this entry and the inventory pod's /ssh mount (Litestream sidecar, inventory spec §1b)"
   secret_value = jsonencode({
-    user        = "litestream"
+    user        = "litestrm"
     private_key = var.card_sorter_litestream_private_key
   })
 }
