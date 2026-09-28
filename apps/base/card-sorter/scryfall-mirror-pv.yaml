@@ -1,0 +1,27 @@
+# The Scryfall mirror on the bulk NAS (identify spec §1, §7): the first
+# NAS-backed volume in the cluster, as a static PersistentVolume with an
+# nfs: spec so that no storage class has to be decided yet (the homelab's
+# deferred build-order item 1 meeting its first consumer). The export is an
+# operator step on the NAS (appliance tier): dataset
+# BulkPoolZ2/artifacts/card-sorter, exported to the compute network, root
+# mapped to root, and the k3s node must resolve the tailnet name.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: scryfall-mirror
+spec:
+  capacity:
+    storage: 200Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    - nfsvers=4
+    - noatime
+  nfs:
+    server: truenas-bulk-52tb
+    path: /mnt/BulkPoolZ2/artifacts/card-sorter/scryfall
+  claimRef:
+    namespace: card-sorter
+    name: scryfall-mirror

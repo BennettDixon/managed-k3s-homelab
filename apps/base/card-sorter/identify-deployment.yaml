@@ -1,0 +1,154 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identify
+  namespace: card-sorter
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: identify
+  template:
+    metadata:
+      labels:
+        app: identify
+    spec:
+      imagePullSecrets:
+        - name: card-sorter-registry-harbor-docker-login
+      terminationGracePeriodSeconds: 30
+      # Hardening block as inventory's. The serving pod makes no outbound
+      # request but inventory's in-cluster Service; only the mirror CronJob
+      # reaches Scryfall (an allow-list of its three hosts, in code).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # First boot on an empty PVC builds the catalogue from the mirror
+        # (about an hour with the hashes), so readiness can never wait on a
+        # CronJob that runs weekly; later boots find the file and skip.
+        - name: first-catalogue
+          image: harbor.internal/card-sorter/identify:0.1.0
+          command: ["sh", "-c", "test -f /data/catalog.db || identify refresh"]
+          env:
+            - name: MIRROR_ROOT
+              value: /mirror
+            - name: DATA_DIR
+              value: /data
+            - name: CATALOG_LANGS
+              value: en
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: mirror
+              mountPath: /mirror
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: identify
+          image: harbor.internal/card-sorter/identify:0.1.0
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PORT
+              value: "8080"
+            - name: MIRROR_ROOT
+              value: /mirror
+            - name: DATA_DIR
+              value: /data
+            - name: CATALOG_LANGS
+              value: en
+            - name: CATALOG_MAX_AGE_DAYS
+              value: "21"
+            - name: IDENTIFY_CALLERS_PATH
+              value: /config/callers.yaml
+            # The same caller map as inventory's (spec §2), and identify's
+            # own entry from it, to tell inventory of a refresh.
+            - name: IDENTIFY_CALLER_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: card-sorter-caller-tokens
+                  key: tokens
+            - name: INVENTORY_URL
+              value: http://inventory.card-sorter.svc.cluster.local
+            - name: INVENTORY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: card-sorter-identify-token
+                  key: token
+          # The index loads and the hashes memory-map at boot: 60 x 5 s.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          # Ready = a catalogue younger than CATALOG_MAX_AGE_DAYS and the
+          # mirror's manifest readable (spec §7).
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: mirror
+              mountPath: /mirror
+              readOnly: true
+            - name: callers
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: identify-data
+        - name: mirror
+          persistentVolumeClaim:
+            claimName: scryfall-mirror
+        - name: callers
+          configMap:
+            name: inventory-callers
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

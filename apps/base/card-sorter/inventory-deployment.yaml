@@ -1,0 +1,174 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory
+  namespace: card-sorter
+spec:
+  # replicas 1 + Recreate + the RWO PVC: one SQLite writer, ever (inventory
+  # spec §1). Litestream in the second container only reads the WAL.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: inventory
+  template:
+    metadata:
+      labels:
+        app: inventory
+    spec:
+      imagePullSecrets:
+        - name: card-sorter-registry-harbor-docker-login
+      # uvicorn's graceful shutdown finishes an in-flight apply (one
+      # transaction, sub-second); the long-poll claim is 35 s and is safe
+      # to cut. Litestream gets the same window to ship the last WAL segment.
+      terminationGracePeriodSeconds: 40
+      # Hardening block cloned from the gateway: no projected SA token, a
+      # read-only root filesystem (writes go to /data and a /tmp emptyDir),
+      # no capabilities, the runtime seccomp profile. The pod makes no
+      # outbound request except identify's in-cluster Service (PR 2).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: inventory
+          # Built and pushed from the workbench (card-sorter
+          # services/inventory/Dockerfile); the tag moves together with
+          # services/inventory/pyproject.toml's version.
+          image: harbor.internal/card-sorter/inventory:0.1.0
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PORT
+              value: "8080"
+            # Image-internal paths, pinned here: the volumeMounts below are
+            # the single source of truth.
+            - name: INVENTORY_DB_PATH
+              value: /data/inventory.db
+            - name: INVENTORY_IMAGES_DIR
+              value: /data/images
+            - name: INVENTORY_CALLERS_PATH
+              value: /config/callers.yaml
+            # The seat-crop store's cap, 2 GiB (spec sign-off 2); the alert
+            # InventoryImagesLarge fires before it.
+            - name: IMAGES_MAX_BYTES
+              value: "2147483648"
+            # A card in flight longer than this with no event from its job
+            # marks its source tray untrusted (spec §4).
+            - name: INFLIGHT_MAX_S
+              value: "900"
+            # A running job silent this long sets sorter_agent_silent; the job
+            # stays running (the machine may be offline and journaling).
+            - name: SILENT_MAX_S
+              value: "300"
+            # IDENTIFY_URL / IDENTIFY_TOKEN come with PR 2: without them the
+            # pending-card retry after a catalogue refresh is inert.
+            # The WHOLE caller-token JSON map {caller_id: token} (spec §2);
+            # class per caller is callers.yaml's job, never the secret's.
+            - name: INVENTORY_CALLER_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: card-sorter-caller-tokens
+                  key: tokens
+          # Boot runs the migrations and the conservation check BEFORE
+          # listening; on a 7,000-card store that is seconds, the startup
+          # probe allows 2 min (24 x 5 s).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          # Liveness = process up, never a write. Readiness = the boot
+          # conservation check passed and the file is sound (spec §1: a
+          # mismatch fails readiness rather than serving a wrong collection).
+          # 3 s, not 1: a synchronous=FULL commit holds the lock across a
+          # disk stall.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: callers
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        - name: litestream
+          # The replica (spec §1b): reads the WAL, ships every segment to
+          # the NAS within a second, snapshots daily, keeps 30 days. It
+          # never writes the database. Same uid as the service so it can
+          # read the file and keep its own state beside it.
+          image: litestream/litestream:0.5.17
+          args: ["replicate", "-config", "/etc/litestream.yml"]
+          ports:
+            - containerPort: 9090
+              name: metrics
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: litestream-config
+              mountPath: /etc/litestream.yml
+              subPath: litestream.yml
+              readOnly: true
+            - name: litestream-key
+              mountPath: /ssh
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: inventory-data
+        - name: callers
+          configMap:
+            name: inventory-callers
+        - name: litestream-config
+          configMap:
+            name: inventory-litestream
+        - name: litestream-key
+          secret:
+            secretName: card-sorter-litestream
+            defaultMode: 0400
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

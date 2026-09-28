@@ -1,0 +1,21 @@
+# identify's own token, one entry of the same caller map, so it can tell
+# inventory of a catalogue refresh (POST /catalog/refreshed, machine class).
+# PR 2, listed in kustomization.yaml with the other identify files.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: card-sorter-identify-token
+  namespace: card-sorter
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: card-sorter-identify-token
+    creationPolicy: Owner
+  data:
+    - secretKey: token
+      remoteRef:
+        key: k3s_card_sorter_caller_tokens
+        property: identify

@@ -15,6 +15,9 @@ resources:
   # Prod-only on purpose (gateway spec §8): in-base ExternalSecrets carrying
   # the first dollar-spending credential — never in apps/development.
   - ../base/gateway
+  # Prod-only on purpose (card-sorter inventory spec §6): in-base
+  # ExternalSecrets — never in apps/development.
+  - ../base/card-sorter
 patches:
   - path: harbor-values.yaml
     target:

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: inventory-data
+  namespace: card-sorter
+spec:
+  # State, not a cache: the only record of which tray holds each of ~7,000
+  # cards (inventory spec §1). Losing it means rescanning every tray, hours
+  # of machine time, which is why the pod carries a Litestream sidecar
+  # replicating to the NAS from the first deploy (spec §1b) and why the
+  # restore is rehearsed before this merges. Single-site by placement, like
+  # every local-path claim. local-path enforces no claim size —
+  # inventory_db_bytes (InventoryDbOversized) is the real cap.
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

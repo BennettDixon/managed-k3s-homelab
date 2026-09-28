@@ -1,0 +1,22 @@
+# The Litestream sidecar's SFTP identity (inventory spec §1b): the private
+# key of the NAS user `litestream`, whose home is the replica dataset and
+# nothing else (appliance-tier: the user is Bennett's console step). Holders,
+# exhaustively: this entry and the inventory pod's /ssh mount.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: card-sorter-litestream
+  namespace: card-sorter
+spec:
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: card-sorter-litestream
+    creationPolicy: Owner
+  data:
+    - secretKey: id_ed25519
+      remoteRef:
+        key: k3s_card_sorter_litestream_sftp
+        property: private_key

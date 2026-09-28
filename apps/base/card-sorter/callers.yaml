@@ -1,0 +1,14 @@
+# Who may call inventory, and as what (card-sorter docs/specs/inventory.md §2).
+# The tokens themselves live in the SM secret k3s_card_sorter_caller_tokens,
+# a JSON map {caller_id: token}, read whole into INVENTORY_CALLER_TOKENS;
+# this file only says the class. A token whose id is not here authenticates
+# nobody. Classes are a closed enum: machine, operator, reader.
+# Adding a caller = one more entry in the SM map (terraform, targeted apply)
+# + a line here; the PR is where a human reads what they grant.
+callers:
+  sorter-01:
+    class: machine       # sorter-agent on the machine's Pi (agent spec §1)
+  bennett:
+    class: operator      # the workbench and the phone
+  identify:
+    class: machine       # PR 2: POST /catalog/refreshed after a catalogue rebuild; no token in the map until then

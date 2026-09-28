@@ -1,0 +1,77 @@
+# The weekly catalogue rebuild after the mirror (identify spec §7): writes
+# catalog.db.next on the PVC and renames it, then POSTs /refresh so the
+# serving pod reopens it. RWO on one node is fine: the pod holds the file
+# read-only and the job writes only .next files.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: catalog-refresh
+  namespace: card-sorter
+spec:
+  schedule: "0 5 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: card-sorter-registry-harbor-docker-login
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: refresh
+              image: harbor.internal/card-sorter/identify:0.1.0
+              args: ["refresh"]
+              env:
+                - name: MIRROR_ROOT
+                  value: /mirror
+                - name: DATA_DIR
+                  value: /data
+                - name: CATALOG_LANGS
+                  value: en
+                - name: INVENTORY_URL
+                  value: http://inventory.card-sorter.svc.cluster.local
+                - name: INVENTORY_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: card-sorter-identify-token
+                      key: token
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: 2000m
+                  memory: 2Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: mirror
+                  mountPath: /mirror
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: identify-data
+            - name: mirror
+              persistentVolumeClaim:
+                claimName: scryfall-mirror
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi

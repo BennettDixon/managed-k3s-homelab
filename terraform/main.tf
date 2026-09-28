@@ -258,3 +258,44 @@ module "gateway_harbor_docker_pull_secret" {
     registry = var.harbor_registry_domain
   })
 }
+
+# ---------------------------------------------------------------------------
+# card-sorter: inventory + identify on k3s (private repo card-sorter,
+# docs/specs/inventory.md §2, §1b, §6). Three entries, all read by ESO in
+# namespace card-sorter; the ARNs are in iam-external-secrets.tf.
+# ---------------------------------------------------------------------------
+module "card_sorter_caller_tokens_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_card_sorter_caller_tokens"
+  description = "card-sorter caller-token JSON map (caller_id -> token) for inventory and identify; class per caller lives in apps/base/card-sorter/callers.yaml. Out-of-band holders: the sorter-01 value in /etc/sorter-agent/token on the machine's Pi; the bennett value in the operator workbench env as INVENTORY_TOKEN; the identify value only in the identify pod (PR 2)"
+  # The WHOLE value is the map: inventory and identify read it with no
+  # `property` (house auth shape); identify's own entry is also read by
+  # property for its calls back to inventory. Adding a caller = one more
+  # entry here + a line in callers.yaml.
+  secret_value = jsonencode({
+    "sorter-01" = var.card_sorter_sorter01_token
+    bennett     = var.card_sorter_operator_token
+    identify    = var.card_sorter_identify_token
+  })
+}
+
+module "card_sorter_litestream_sftp_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_card_sorter_litestream_sftp"
+  description = "Private key of the NAS user litestream, whose home is the replica dataset BulkPoolZ2/artifacts/card-sorter/litestream and nothing else; holders: this entry and the inventory pod's /ssh mount (Litestream sidecar, inventory spec §1b)"
+  secret_value = jsonencode({
+    user        = "litestream"
+    private_key = var.card_sorter_litestream_private_key
+  })
+}
+
+module "card_sorter_harbor_docker_pull_secret" {
+  source      = "./modules/secrets_manager"
+  secret_name = "k3s_harbor_docker_pull_card_sorter"
+  description = "Pull-only Harbor robot for the card-sorter project (inventory and identify images); holders: this entry and the imagePullSecret in namespace card-sorter"
+  secret_value = jsonencode({
+    username = var.card_sorter_harbor_docker_pull_username
+    password = var.card_sorter_harbor_docker_pull_password
+    registry = var.harbor_registry_domain
+  })
+}

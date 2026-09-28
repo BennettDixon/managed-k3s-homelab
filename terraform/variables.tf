@@ -248,3 +248,41 @@ variable "gateway_harbor_docker_pull_password" {
   type        = string
   sensitive   = true
 }
+
+# card-sorter secret values (never committed; set in terraform.tfvars).
+# Onboarding + rotation: docs/runbooks/card-sorter.md; spec in the card-sorter repo, docs/specs/inventory.md §2.
+variable "card_sorter_sorter01_token" {
+  description = "card-sorter caller token for the machine sorter-01 (machine class; the same value in /etc/sorter-agent/token on the Pi); openssl rand -hex 32, must differ from every other caller's value"
+  type        = string
+  sensitive   = true
+}
+
+variable "card_sorter_operator_token" {
+  description = "card-sorter caller token for the operator class (the workbench and the phone)"
+  type        = string
+  sensitive   = true
+}
+
+variable "card_sorter_identify_token" {
+  description = "card-sorter caller token for the identify service (machine class), used only for POST /catalog/refreshed to inventory"
+  type        = string
+  sensitive   = true
+}
+
+variable "card_sorter_litestream_private_key" {
+  description = "OpenSSH private key (the whole PEM, newlines included) of the NAS user litestream; its public key is the only entry in that user's authorized_keys"
+  type        = string
+  sensitive   = true
+}
+
+variable "card_sorter_harbor_docker_pull_username" {
+  description = "Full Harbor robot name for card-sorter project pulls (robot$card-sorter+card-sorter-pull)"
+  type        = string
+  sensitive   = true
+}
+
+variable "card_sorter_harbor_docker_pull_password" {
+  description = "Harbor robot secret for card-sorter project pulls"
+  type        = string
+  sensitive   = true
+}

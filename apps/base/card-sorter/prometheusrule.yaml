@@ -1,0 +1,131 @@
+# Alerts per inventory spec §1b and §7. Delivery: Alertmanager -> n8n webhook
+# -> Telegram (docs/runbooks/alerts.md); `severity: critical` is a label
+# until the notifications lane splits routes. Two rules are meant to wake
+# the operator: the machine waiting for a person, and the replica sidecar
+# gone (the only other copy of the manifests). Everything else waits for
+# morning. What to do: docs/runbooks/card-sorter.md.
+#
+# Deliberately NO node-filesystem alert here: jobs-mcp's JobsPvcDiskFilling
+# owns that signal; service-emitted inventory_db_bytes and
+# inventory_images_bytes are this service's share. identify's rules ship
+# with its own PR, when the pod that emits its series exists.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: card-sorter
+  namespace: card-sorter
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: card-sorter.rules
+      rules:
+        - alert: InventoryMetricsAbsent
+          # Instant-vector alerts silently disarm when the series vanishes.
+          # This guard fires precisely then; for: 10m absorbs a Recreate.
+          expr: absent(inventory_db_bytes{namespace="card-sorter"})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "inventory metrics have vanished from Prometheus"
+            description: >-
+              No inventory_db_bytes series exists: the scrape target is gone.
+              Check the Deployment, the Service's app label and the
+              ServiceMonitor's release label. While this fires every other
+              card-sorter alert is blind.
+        - alert: SorterNeedsHuman
+          # The page (spec §7): the machine is blocked and waiting for a
+          # person — a tray swap, a jam cleared, a resume on the panel.
+          expr: sorter_job_blocked{namespace="card-sorter"} == 1
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "the card sorter is waiting for a person"
+            description: >-
+              Machine {{ $labels.machine }} has had a job blocked for 10
+              minutes. The panel on the machine's Pi (http://sorter-bench:8090/)
+              says what it needs; the job's events in inventory say why.
+        - alert: InventoryReplicaDown
+          # The other page: the Litestream sidecar is not reporting, so the
+          # NAS replica is not being written and the PVC is the only copy.
+          expr: absent(litestream_db_size{namespace="card-sorter"})
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "inventory's Litestream sidecar is down"
+            description: >-
+              No litestream_db_size series from the inventory pod: the
+              sidecar is not running or not scraped. Until it is, every move
+              the machine makes exists only on the node's disk. kubectl -n
+              card-sorter logs deploy/inventory -c litestream.
+        - alert: InventoryReplicaStale
+          # Moves are being applied but nothing has shipped to the NAS for
+          # 10 minutes: the SFTP path, the key or the NAS. Morning.
+          expr: >-
+            sum(increase(inventory_apply_total{namespace="card-sorter"}[10m])) > 0
+            and sum(increase(litestream_replica_operation_total{namespace="card-sorter", operation="write"}[10m])) == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "inventory's replica on the NAS is not receiving segments"
+            description: >-
+              inventory applied moves in the last 10 minutes but Litestream
+              wrote nothing to the replica. Check the sidecar's log for the
+              SFTP error, the NAS user litestream and its dataset.
+        - alert: SorterAgentSilent
+          # A job is running and the machine has said nothing for 5 minutes:
+          # offline and journaling (fine, it catches up), or stuck. Morning.
+          expr: >-
+            inventory_jobs{namespace="card-sorter", state="running"} > 0
+            and max(sorter_agent_last_seen_seconds{namespace="card-sorter"}) > 300
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "a card-sorter job is running and the machine is silent"
+            description: >-
+              No event from the machine for over 5 minutes while a job is
+              running. The store never fails a job for silence (agent spec
+              §6); if the Pi is off the tailnet it replays its journal when
+              it is back. Otherwise look at the panel and the agent's log.
+        - alert: InventoryInflightStale
+          # A card left a tray and its job never said where it went; the
+          # sweep marked the source untrusted from that index. Morning: a
+          # rescan job.
+          expr: inventory_inflight_stale{namespace="card-sorter"} > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cards in flight past INFLIGHT_MAX_S; a tray is untrusted"
+            description: >-
+              {{ $value }} cards have been in flight longer than the limit
+              with no event from their job. Their source trays are untrusted
+              until rescanned: queue a rescan job for each.
+        - alert: InventoryImagesLarge
+          # The seat-crop store is near its 2 GiB cap (spec sign-off 2).
+          expr: inventory_images_bytes{namespace="card-sorter"} > 2 * 1073741824 * 0.9
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "inventory's image store is over 90% of its 2 GiB cap"
+            description: >-
+              At the cap PUT /images answers 400 and scans go on without
+              their crop. Pruning old crops is an explicit human task; the
+              nightly rsync to the NAS has every image already.
+        - alert: InventoryDbOversized
+          expr: inventory_db_bytes{namespace="card-sorter"} > 0.8 * 5 * 1073741824
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "inventory.db exceeds 80% of the PVC's nominal 5Gi"
+            description: >-
+              local-path never enforces the claim. 7,000 cards with their
+              events are tens of MB, so this is a runaway event stream or a
+              bug; look before it fills the node's disk.

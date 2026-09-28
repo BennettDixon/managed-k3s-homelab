@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory
+  namespace: card-sorter
+  labels:
+    # The ServiceMonitor selects Services by this label — without it the
+    # monitor matches nothing and Prometheus silently never scrapes us.
+    app: inventory
+  annotations:
+    # Tailnet-only exposure (inventory spec §2): the machine's Pi (a tagged
+    # node) and the workbench reach it as http://inventory/. No tailnet node
+    # of that name existed on 2026-09-28 — MagicDNS would silently mint
+    # inventory-1 (MERGE GATE).
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: "inventory"
+spec:
+  selector:
+    app: inventory
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http
+    # The Litestream sidecar's own metrics (spec §1b), scraped by the same
+    # ServiceMonitor; nothing but Prometheus reads it.
+    - name: metrics
+      protocol: TCP
+      port: 9090
+      targetPort: metrics
+  type: ClusterIP

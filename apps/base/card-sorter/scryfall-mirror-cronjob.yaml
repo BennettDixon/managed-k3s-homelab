@@ -1,0 +1,68 @@
+# The weekly Scryfall pull onto the NAS (identify spec §1, §4b): the same
+# image with `identify mirror`, the mirror volume read-write, one at a time.
+# Its egress is the three Scryfall hosts, enforced in code. The first full
+# run (a day and a half) happened from the workbench before this merged.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scryfall-mirror
+  namespace: card-sorter
+spec:
+  schedule: "0 1 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: card-sorter-registry-harbor-docker-login
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: mirror
+              image: harbor.internal/card-sorter/identify:0.1.0
+              args: ["mirror"]
+              env:
+                - name: MIRROR_ROOT
+                  value: /mirror
+                - name: MIRROR_LANGS
+                  value: en
+                - name: MIRROR_TIERS
+                  value: small,normal,art_crop,large,png
+                - name: MIRROR_RATE
+                  value: "5"
+                - name: MIRROR_KEEP_SNAPSHOTS
+                  value: "4"
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: mirror
+                  mountPath: /mirror
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: mirror
+              persistentVolumeClaim:
+                claimName: scryfall-mirror
+            - name: tmp
+              emptyDir:
+                sizeLimit: 2Gi

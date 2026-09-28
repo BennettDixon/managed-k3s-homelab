@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: identify
+  namespace: card-sorter
+  labels:
+    app: identify
+  annotations:
+    # Tailnet-only (identify spec §2): the machine's Pi posts seat frames to
+    # http://identify/. No tailnet node of that name existed on 2026-09-28.
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: "identify"
+spec:
+  selector:
+    app: identify
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http
+  type: ClusterIP

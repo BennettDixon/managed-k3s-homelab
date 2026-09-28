@@ -3,7 +3,7 @@
 Rolling status of the personal-cloud buildout. Updated at the end of every working
 session. Tailnet MagicDNS names only — no LAN IPs or site details in this file.
 
-_Last updated: 2026-09-14_
+_Last updated: 2026-09-28_
 
 ## Standing infrastructure
 
@@ -68,6 +68,16 @@ _Last updated: 2026-09-14_
 - **Proxmox hosts on tailnet:** `dellpve` (compute), `naspve` (storage/NAS),
   `edgepve` (edge — host tailscale is its management path; see
   `proxmox/edgepve.md`).
+- **card-sorter — manifests written, behind the MERGE GATE (2026-09-28):** the
+  card-sorting machine's backend, `inventory` (tray manifests, SQLite on
+  `local-path` with a Litestream sidecar replicating to the bulk NAS over SFTP
+  by tailnet name — the first Litestream in the cluster) and `identify` (a seat
+  photo → a printing against a Scryfall mirror on the NAS — the first NFS-backed
+  volume, a static PV). Namespace `card-sorter`, `apps/base/card-sorter/`,
+  three SM entries in `terraform/`, runbook `docs/runbooks/card-sorter.md`.
+  Nothing merged: inventory's PR waits on the Harbor project, the NAS datasets,
+  export and `litestream` user, and the targeted apply; identify's on the full
+  mirror and its eval. Specs and services live in the private card-sorter repo.
 - **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM internals,
   storage pools, Tailscale ACLs.
 
