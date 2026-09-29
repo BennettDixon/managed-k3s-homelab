@@ -1,0 +1,31 @@
+# The card-sorter's seat images on the bulk NAS (inventory spec §6, learning
+# prep 2026-09-29): every full-size frame the seat camera takes, 3 to 5 MB
+# each, kept as the training set for the matcher (card-sorter repo,
+# docs/matching-design.md §3). A static NFS volume like scryfall-mirror, and
+# for the same reasons: the NAS's LAN address from cluster-vars (the kubelet
+# mounts it and the node does not resolve tailnet names), NFSv3 because the
+# NAS has NFSv4 off. The dataset BulkPoolZ2/artifacts/card-sorter/seat-images,
+# its own NFS share, and its owner uid/gid 10001 (inventory's user; NFS does
+# not apply fsGroup) are operator steps on the NAS (appliance tier).
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: seat-images
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    - nfsvers=3
+    - tcp
+    - hard
+    - noatime
+  nfs:
+    server: "${NAS_LAN_IP}"
+    path: /mnt/BulkPoolZ2/artifacts/card-sorter/seat-images
+  claimRef:
+    namespace: card-sorter
+    name: seat-images

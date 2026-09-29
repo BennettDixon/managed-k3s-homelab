@@ -30,6 +30,10 @@ resources:
   - card-sorter-inventory-token.yaml
   - identify-servicemonitor.yaml
   - identify-prometheusrule.yaml
+  # Learning prep (inventory 0.3.0): the seat images move to the NAS as the
+  # matcher's training set.
+  - seat-images-pv.yaml
+  - seat-images-pvc.yaml
 configMapGenerator:
   # Hash-suffixed: a caller-registry change rolls the Recreate Deployment
   # (the map is read at boot); a ConfigMap updated in place would go stale.

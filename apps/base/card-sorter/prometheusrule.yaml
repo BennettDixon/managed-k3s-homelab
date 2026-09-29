@@ -107,17 +107,17 @@ spec:
               with no event from their job. Their source trays are untrusted
               until rescanned: queue a rescan job for each.
         - alert: InventoryImagesLarge
-          # The seat-crop store is near its 2 GiB cap (spec sign-off 2).
-          expr: inventory_images_bytes{namespace="card-sorter"} > 2 * 1073741824 * 0.9
+          # The seat-image store on the NAS is near its 500 GiB cap (0.3.0).
+          expr: inventory_images_bytes{namespace="card-sorter"} > 500 * 1073741824 * 0.9
           for: 15m
           labels:
             severity: warning
           annotations:
-            summary: "inventory's image store is over 90% of its 2 GiB cap"
+            summary: "inventory's image store is over 90% of its 500 GiB cap"
             description: >-
               At the cap PUT /images answers 400 and scans go on without
-              their crop. Pruning old crops is an explicit human task; the
-              nightly rsync to the NAS has every image already.
+              their image. The images are the matcher's training set on the
+              NAS (seat-images volume): raise the cap, never prune them.
         - alert: InventoryDbOversized
           expr: inventory_db_bytes{namespace="card-sorter"} > 0.8 * 5 * 1073741824
           for: 15m

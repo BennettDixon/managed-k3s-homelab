@@ -59,6 +59,18 @@ Everything above, and, in order:
 
 Then merge in one PR. The first boot's init container builds the catalogue from the mirror (minutes on a partial mirror, about an hour on the full one), during which the `apps` Kustomization is NotReady on purpose: schedule it, and merge nothing else in that window.
 
+## MERGE GATE (PR 3 — learning prep: inventory 0.3.0, seat images on the NAS)
+
+Inventory 0.3.0 keeps identify's full answers and a label ledger (card-sorter repo, `services/inventory/src/inventory/learning.py`), and its seat images move to the NAS as the matcher's training set: full frames, 3 to 5 MB each. The deployment is `Recreate`, so a volume that does not mount leaves inventory down: every step below comes before the merge, in order.
+
+1. **The dataset** `BulkPoolZ2/artifacts/card-sorter/seat-images` (UI: Storage → Pools → `card-sorter` ⋮ → Add Dataset, name `seat-images`, defaults).
+2. **Its owner is inventory's user**, uid and gid 10001: NFS does not apply the pod's `fsGroup`, and the pod writes as 10001. In a NAS shell: `chown 10001:10001 /mnt/BulkPoolZ2/artifacts/card-sorter/seat-images && chmod 750 /mnt/BulkPoolZ2/artifacts/card-sorter/seat-images`.
+3. **Its own NFS share**, path `/mnt/BulkPoolZ2/artifacts/card-sorter/seat-images`, the same networks as the mirror's share (`10.0.10.0/24`, `10.0.100.0/24`), no maproot or mapall (UI: Sharing → Unix (NFS) Shares → Add). A separate dataset needs its own entry: an export does not cross into a child dataset.
+4. **The node mounts it and uid 10001 can write** (the agent does this): a throwaway pod in `card-sorter`, `runAsUser: 10001`, with the PV's `nfs:` spec and options (`nfsvers=3`), writes, reads and deletes a file; deleted afterwards.
+5. **The images pushed:** `inventory:0.3.0` and `identify:0.2.1` (done 2026-09-29). The identify tag is its own PR and can merge first or after.
+
+Then merge. The pod restarts once; `/data/images` is empty on the old volume (checked 2026-09-29), so nothing moves. After the rollout: `GET /readyz` from the Pi, `GET /dataset?labelled=false` answers `200` with an empty body, and the NAS dataset holds the next seat frame the agent uploads.
+
 ## First run after merge (verify on the cluster, never on GitHub)
 
 ```bash
