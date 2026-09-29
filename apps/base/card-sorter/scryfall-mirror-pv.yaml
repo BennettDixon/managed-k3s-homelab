@@ -24,7 +24,9 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: ""
   mountOptions:
-    - nfsvers=4
+    - nfsvers=3          # the NAS has NFSv4 off (nfs.config v4=false); v4 fails with 'Protocol not supported'
+    - tcp
+    - hard
     - noatime
   nfs:
     server: "${NAS_LAN_IP}"
