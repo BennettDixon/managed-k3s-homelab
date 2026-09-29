@@ -39,7 +39,7 @@ spec:
           # Built and pushed from the workbench (card-sorter
           # services/inventory/Dockerfile); the tag moves together with
           # services/inventory/pyproject.toml's version.
-          image: harbor.internal/card-sorter/inventory:0.2.0
+          image: harbor.internal/card-sorter/inventory:0.3.0
           ports:
             - containerPort: 8080
               name: http
@@ -54,10 +54,14 @@ spec:
               value: /data/images
             - name: INVENTORY_CALLERS_PATH
               value: /config/callers.yaml
-            # The seat-crop store's cap, 2 GiB (spec sign-off 2); the alert
-            # InventoryImagesLarge fires before it.
+            # Since 0.3.0 the seat images are full-size frames on the NAS
+            # (seat-images volume, mounted at /data/images), kept as the
+            # matcher's training set: 3 to 5 MB each, so 8 MiB a frame and
+            # 500 GiB in all; the alert InventoryImagesLarge fires before it.
             - name: IMAGES_MAX_BYTES
-              value: "2147483648"
+              value: "536870912000"
+            - name: IMAGE_MAX_BYTES
+              value: "8388608"
             # A card in flight longer than this with no event from its job
             # marks its source tray untrusted (spec §4).
             - name: INFLIGHT_MAX_S
@@ -124,6 +128,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: seat-images
+              mountPath: /data/images
             - name: callers
               mountPath: /config
               readOnly: true
@@ -167,6 +173,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: inventory-data
+        - name: seat-images
+          persistentVolumeClaim:
+            claimName: seat-images
         - name: callers
           configMap:
             name: inventory-callers

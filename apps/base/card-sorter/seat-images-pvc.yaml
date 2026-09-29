@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seat-images
+  namespace: card-sorter
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: seat-images
+  resources:
+    requests:
+      storage: 500Gi
