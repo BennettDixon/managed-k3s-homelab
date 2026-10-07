@@ -39,7 +39,7 @@ spec:
           # Built and pushed from the workbench (card-sorter
           # services/inventory/Dockerfile); the tag moves together with
           # services/inventory/pyproject.toml's version.
-          image: harbor.internal/card-sorter/inventory:0.6.5
+          image: harbor.internal/card-sorter/inventory:0.6.6
           ports:
             - containerPort: 8080
               name: http
