@@ -33,7 +33,7 @@ spec:
         # (about an hour with the hashes), so readiness can never wait on a
         # CronJob that runs weekly; later boots find the file and skip.
         - name: first-catalogue
-          image: harbor.internal/card-sorter/identify:0.3.8
+          image: harbor.internal/card-sorter/identify:0.3.9
           command: ["sh", "-c", "test -f /data/catalog.db || identify refresh"]
           env:
             - name: MIRROR_ROOT
@@ -64,7 +64,7 @@ spec:
               mountPath: /tmp
       containers:
         - name: identify
-          image: harbor.internal/card-sorter/identify:0.3.8
+          image: harbor.internal/card-sorter/identify:0.3.9
           ports:
             - containerPort: 8080
               name: http
