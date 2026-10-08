@@ -29,7 +29,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: refresh
-              image: harbor.internal/card-sorter/identify:0.3.6
+              image: harbor.internal/card-sorter/identify:0.3.8
               # The image sets `identify serve` as CMD, not as an entrypoint: args alone
               # would replace it and exec a program called "mirror" or "refresh"
               # (found 2026-09-29; both CronJobs would have failed on their first run).
