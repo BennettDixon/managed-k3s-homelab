@@ -33,7 +33,7 @@ spec:
         # (about an hour with the hashes), so readiness can never wait on a
         # CronJob that runs weekly; later boots find the file and skip.
         - name: first-catalogue
-          image: harbor.internal/card-sorter/identify:0.3.11
+          image: harbor.internal/card-sorter/identify:0.3.12
           command: ["sh", "-c", "test -f /data/catalog.db || identify refresh"]
           env:
             - name: MIRROR_ROOT
@@ -64,7 +64,7 @@ spec:
               mountPath: /tmp
       containers:
         - name: identify
-          image: harbor.internal/card-sorter/identify:0.3.11
+          image: harbor.internal/card-sorter/identify:0.3.12
           ports:
             - containerPort: 8080
               name: http
@@ -95,6 +95,10 @@ spec:
                 secretKeyRef:
                   name: card-sorter-identify-token
                   key: token
+            # RapidOCR (PP-OCRv4 ONNX on the CPU) reads the collector line since 0.3.12, Tesseract the fallback;
+            # IDENTIFY_COLLECTOR_READER=tesseract is the kill switch. Its threads match the CPU limit below.
+            - name: IDENTIFY_OCR_THREADS
+              value: "4"
           # The index loads and the hashes memory-map at boot: 60 x 5 s.
           startupProbe:
             httpGet:
@@ -121,7 +125,7 @@ spec:
               cpu: 1000m
               memory: 2Gi
             limits:
-              cpu: 2000m
+              cpu: 4000m
               memory: 4Gi
           securityContext:
             allowPrivilegeEscalation: false
