@@ -84,7 +84,7 @@ _Last updated: 2026-09-28_
   **2026-10-13 (PRs #68 to #72):** a second read-only NAS volume,
   `card-sorter-models`, with its own NFS share, for identify. The weekly mirror
   CronJob had failed since 2026-10-05 on the dataset's ownership; chowned and run
-  by hand the same day. Current images: identify 0.3.17, inventory 0.6.22; what
+  by hand the same day. Current images: identify 0.3.18, inventory 0.6.22; what
   each release does is recorded in the private card-sorter repo.
 - **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM internals,
   storage pools, Tailscale ACLs.
