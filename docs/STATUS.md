@@ -85,9 +85,10 @@ _Last updated: 2026-09-28_
   from a second read-only NAS volume `card-sorter-models` with its own NFS
   share; verified from a throwaway pod (`versions.models` names all four). The
   weekly mirror CronJob had failed since 2026-10-05 on the dataset's ownership;
-  chowned and run by hand the same day. **inventory 0.6.19:** the ML dashboard
-  at `http://inventory/ml`, what identify saw and what every stage said, card by
-  card, for a run or a replay.
+  chowned and run by hand the same day. **inventory 0.6.20 (PR #70):** the ML
+  dashboard at `http://inventory/ml`, what identify saw and what every stage
+  said, card by card, for a run or a replay; 0.6.20 shows the card warped
+  upright with the regions each stage read, as an instrument panel.
 - **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM internals,
   storage pools, Tailscale ACLs.
 
