@@ -33,7 +33,7 @@ spec:
         # (about an hour with the hashes), so readiness can never wait on a
         # CronJob that runs weekly; later boots find the file and skip.
         - name: first-catalogue
-          image: harbor.internal/card-sorter/identify:0.3.14
+          image: harbor.internal/card-sorter/identify:0.3.16
           command: ["sh", "-c", "test -f /data/catalog.db || identify refresh"]
           env:
             - name: MIRROR_ROOT
@@ -64,7 +64,7 @@ spec:
               mountPath: /tmp
       containers:
         - name: identify
-          image: harbor.internal/card-sorter/identify:0.3.14
+          image: harbor.internal/card-sorter/identify:0.3.16
           ports:
             - containerPort: 8080
               name: http
@@ -99,6 +99,20 @@ spec:
             # IDENTIFY_COLLECTOR_READER=tesseract is the kill switch. Its threads match the CPU limit below.
             - name: IDENTIFY_OCR_THREADS
               value: "4"
+            # 0.3.15: the title's Tesseract processes and RapidOCR run side by side on a pool of six workers,
+            # which is why the CPU limit below is 8. 0.3.16: the mirror models in shadow, from the models
+            # volume: one version per model, unset is off, a model that fails to load is off and logged; their
+            # outputs are logged in every answer and decide nothing yet (the shadow log is the eval's gate).
+            - name: MODELS_DIR
+              value: /models
+            - name: FRAME_CLF_VERSION
+              value: v0.1-A
+            - name: SET_SYMBOL_VERSION
+              value: v0.1-A
+            - name: NAME_EMBED_VERSION
+              value: v0.1
+            - name: ART_EMBED_VERSION
+              value: v0.2-ft
           # The index loads and the hashes memory-map at boot: 60 x 5 s.
           startupProbe:
             httpGet:
@@ -120,13 +134,14 @@ spec:
               port: http
             periodSeconds: 10
             timeoutSeconds: 3
+          # 0.3.16: the four models and their two indexes add about 400 MB (the pod sat at 0.8 GB on 0.3.14).
           resources:
             requests:
               cpu: 1000m
-              memory: 2Gi
+              memory: 3Gi
             limits:
-              cpu: 4000m
-              memory: 4Gi
+              cpu: 8000m
+              memory: 5Gi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -137,6 +152,9 @@ spec:
               mountPath: /data
             - name: mirror
               mountPath: /mirror
+              readOnly: true
+            - name: models
+              mountPath: /models
               readOnly: true
             - name: callers
               mountPath: /config
@@ -150,6 +168,10 @@ spec:
         - name: mirror
           persistentVolumeClaim:
             claimName: scryfall-mirror
+        - name: models
+          persistentVolumeClaim:
+            claimName: card-sorter-models
+            readOnly: true
         - name: callers
           configMap:
             name: inventory-callers

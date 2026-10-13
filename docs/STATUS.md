@@ -81,6 +81,10 @@ _Last updated: 2026-09-28_
   with the NFS volume by the NAS's address from `cluster-vars` (the node does not
   resolve tailnet names either) and its eval deferred until the imaging head
   exists. Specs and services live in the private card-sorter repo.
+  **identify 0.3.16 (PR, 2026-10-13):** the mirror models in shadow, from a
+  second read-only NAS volume `card-sorter-models`; gate: an NFS share for the
+  path and the image (runbook, PR 4). The weekly mirror CronJob has failed since
+  2026-10-05 on the dataset's ownership (runbook, same section).
 - **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM internals,
   storage pools, Tailscale ACLs.
 

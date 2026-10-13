@@ -1,0 +1,34 @@
+# The card-sorter's trained models on the bulk NAS (identify 0.3.16, the
+# mirror models in shadow; card-sorter repo,
+# services/identify/research/results/mirror_models_integration.md):
+# models/<name>/<version>/ with a manifest, an ONNX file and, for the two
+# retrievers, an index and its printing ids, 0.8 GB for the four, plus a
+# SHA256SUMS; trained on the workbench and rsynced here, never changed in
+# place (a new version is a new directory). A static NFS volume like
+# scryfall-mirror and for the same reasons: the NAS's LAN address from
+# cluster-vars, NFSv3. Unlike seat-images it is a plain directory under the
+# card-sorter dataset, not a dataset of its own, so the parent's export
+# covers it and no NAS step is needed; read-only in the pod.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: card-sorter-models
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadOnlyMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    - nfsvers=3
+    - tcp
+    - hard
+    - noatime
+    - ro
+  nfs:
+    server: "${NAS_LAN_IP}"
+    path: /mnt/BulkPoolZ2/artifacts/card-sorter/models
+  claimRef:
+    namespace: card-sorter
+    name: card-sorter-models

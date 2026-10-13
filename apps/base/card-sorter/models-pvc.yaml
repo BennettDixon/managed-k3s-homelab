@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: card-sorter-models
+  namespace: card-sorter
+spec:
+  accessModes:
+    - ReadOnlyMany
+  storageClassName: ""
+  volumeName: card-sorter-models
+  resources:
+    requests:
+      storage: 20Gi

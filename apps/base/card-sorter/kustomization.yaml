@@ -34,6 +34,10 @@ resources:
   # matcher's training set.
   - seat-images-pv.yaml
   - seat-images-pvc.yaml
+  # PR 4 (identify 0.3.16): the trained models on the NAS, read-only, for
+  # the mirror models in shadow.
+  - models-pv.yaml
+  - models-pvc.yaml
 configMapGenerator:
   # Hash-suffixed: a caller-registry change rolls the Recreate Deployment
   # (the map is read at boot); a ConfigMap updated in place would go stale.
