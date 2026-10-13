@@ -81,14 +81,11 @@ _Last updated: 2026-09-28_
   with the NFS volume by the NAS's address from `cluster-vars` (the node does not
   resolve tailnet names either) and its eval deferred until the imaging head
   exists. Specs and services live in the private card-sorter repo.
-  **identify 0.3.16 LIVE (2026-10-13, PR #68):** the mirror models in shadow,
-  from a second read-only NAS volume `card-sorter-models` with its own NFS
-  share; verified from a throwaway pod (`versions.models` names all four). The
-  weekly mirror CronJob had failed since 2026-10-05 on the dataset's ownership;
-  chowned and run by hand the same day. **inventory 0.6.21 (PRs #70, #71):** the ML
-  dashboard at `http://inventory/ml`, what identify saw and what every stage
-  said, card by card, for a run or a replay; 0.6.20 shows the card warped
-  upright with the regions each stage read, as an instrument panel.
+  **2026-10-13 (PRs #68 to #72):** a second read-only NAS volume,
+  `card-sorter-models`, with its own NFS share, for identify. The weekly mirror
+  CronJob had failed since 2026-10-05 on the dataset's ownership; chowned and run
+  by hand the same day. Current images: identify 0.3.17, inventory 0.6.22; what
+  each release does is recorded in the private card-sorter repo.
 - **Appliance tier (do not modify):** gateway LXCs, Pi-hole, NAS VM internals,
   storage pools, Tailscale ACLs.
 
