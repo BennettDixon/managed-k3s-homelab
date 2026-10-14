@@ -33,7 +33,7 @@ spec:
         # (about an hour with the hashes), so readiness can never wait on a
         # CronJob that runs weekly; later boots find the file and skip.
         - name: first-catalogue
-          image: harbor.internal/card-sorter/identify:0.3.20
+          image: harbor.internal/card-sorter/identify:0.3.21
           command: ["sh", "-c", "test -f /data/catalog.db || identify refresh"]
           env:
             - name: MIRROR_ROOT
@@ -64,7 +64,7 @@ spec:
               mountPath: /tmp
       containers:
         - name: identify
-          image: harbor.internal/card-sorter/identify:0.3.20
+          image: harbor.internal/card-sorter/identify:0.3.21
           ports:
             - containerPort: 8080
               name: http
@@ -113,6 +113,8 @@ spec:
               value: v0.1
             - name: ART_EMBED_VERSION
               value: v0.2-ft
+            - name: LIST_MARK_VERSION
+              value: v0.1
           # The index loads and the hashes memory-map at boot: 60 x 5 s.
           startupProbe:
             httpGet:
