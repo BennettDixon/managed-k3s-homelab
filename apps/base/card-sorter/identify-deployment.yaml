@@ -136,7 +136,12 @@ spec:
               port: http
             periodSeconds: 10
             timeoutSeconds: 3
-          # 0.3.16: the four models and their two indexes add about 400 MB (the pod sat at 0.8 GB on 0.3.14).
+          # Measured 2026-10-26 on 0.3.23: about 1.95 GB resident at steady state and
+          # 2.4 GB the lifetime peak working set, so the limit below is roughly twice
+          # the peak. (The 0.3.16 note read 0.8 GB on 0.3.14 plus about 400 MB for the
+          # models; 0.3.17 to 0.3.23 added the rest.) A fresh pod climbs to that steady
+          # state over about four days as the catalogue and hashes page in — a rising
+          # container_memory_rss after a rollout is the warm-up, not a leak.
           resources:
             requests:
               cpu: 1000m
